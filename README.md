@@ -6,6 +6,11 @@
 
 详细设计见 [`docs/concept-design.md`](docs/concept-design.md)。
 
+**工位单元控制**（视觉引导取放 + 多机调度与区域互锁）：
+设计见 [`docs/cell-control-design.md`](docs/cell-control-design.md)，
+代码骨架见 [`cellctl/`](cellctl/)（含仿真驱动，无硬件可跑通：
+`python3 -m cellctl.main --cycles 3`；互锁测试：`python3 tests/test_zone_lock.py`）。
+
 ## 核心思路一页速览
 
 1. **用并行补速度**：协作机器人单臂节拍慢（一次取放约 3–5 s），
