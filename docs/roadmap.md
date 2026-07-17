@@ -23,6 +23,7 @@
 | 主状态机 + 区域互锁 + 任务派发 | ✅ | `cellctl/scheduler/` |
 | 2D 标定 + 轮廓定位（算法骨架） | ✅ 逻辑完成，需真机数据 | `cellctl/vision/` |
 | 操作看板（LIVE + DEMO 双模式） | ✅ | `cellctl/dashboard/` |
+| 看板 3D 工作单元（真机关节角 FK + 多视角） | ✅ 真机读关节角走正向运动学；无则退两连杆 | `cellctl/dashboard/panel.html` |
 | 互锁单元测试 | ✅ | `tests/test_zone_lock.py` |
 
 **缺口 = 一切需要碰真实硬件的环节**：相机、真机驱动实现、手眼标定数据、

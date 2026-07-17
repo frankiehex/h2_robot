@@ -76,6 +76,10 @@ class CellController:
         stations = []
         for st in self.stations:
             done = list(getattr(st, "last_report", []) or [])
+            try:
+                joints = st.arm.read_joints()   # 实际六轴关节角(度)，供 3D 用 FK 还原
+            except Exception:
+                joints = None
             stations.append({
                 "name": st.name,
                 "label": getattr(st, "label", st.name),
@@ -85,6 +89,8 @@ class CellController:
                 "vision": {"dx": 0.0, "dy": 0.0, "dth": 0.0},
                 "done": done,
                 "at_home": st.arm.at_home,
+                "joints": joints,
+                "kin": getattr(st, "kin", None),  # 可选连杆长度(逐型号更准)
             })
         # 全量 zone 表（未持有 = None），供看板显示 FREE/持有者
         all_zones = getattr(self.locks, "_locks", {})

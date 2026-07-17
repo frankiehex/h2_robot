@@ -191,6 +191,11 @@
   #cv3d:active{cursor:grabbing}
   .v3dhint{position:absolute; right:14px; bottom:10px; font-family:var(--mono);
     font-size:10.5px; color:var(--faint); pointer-events:none; letter-spacing:.05em}
+  .v3dviews{margin-left:auto; display:inline-flex; gap:4px}
+  .v3dviews button{font-family:var(--mono); font-size:11px; padding:3px 9px; background:var(--panel2);
+    border:1px solid var(--line); color:var(--muted); border-radius:6px; cursor:pointer; letter-spacing:.03em}
+  .v3dviews button:hover{color:var(--accent); border-color:var(--accent)}
+  .v3dviews button.on{color:var(--accent); border-color:rgba(255,176,32,.5); background:rgba(255,176,32,.1)}
   @media(max-width:1040px){#cv3d{height:300px}}
   @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
 </style>
@@ -213,9 +218,13 @@
   <div class="stepper" id="stepper"></div>
 
   <div class="card view3d">
-    <h2>三维工作单元 · 实时 3D <span class="tag" id="v3d-tag">跟随数据</span></h2>
+    <h2>三维工作单元 · 实时 3D
+      <span class="v3dviews" id="v3dviews">
+        <button data-v="iso" class="on">等距</button><button data-v="top">顶视</button><button data-v="front">正视</button><button data-v="side">侧视</button>
+      </span>
+    </h2>
     <canvas id="cv3d"></canvas>
-    <span class="v3dhint">拖拽旋转视角</span>
+    <span class="v3dhint" id="v3dhint">拖拽旋转 · 关节角:估计</span>
   </div>
 
   <div class="main">
@@ -406,7 +415,10 @@
       `<div class="ln ${i===0?'new':''} ${e.fault?'fault':''}"><span class="t">${e.t}</span><span>${e.msg}</span></div>`
     ).join("");
 
-    if(scene) scene.update(st);   // 同一份状态喂给 3D 场景
+    if(scene){ scene.update(st);   // 同一份状态喂给 3D 场景
+      const hint=document.getElementById("v3dhint");
+      if(hint) hint.textContent = "拖拽旋转 · 关节角:" + (scene.hasJoints()?"真机 FK":"估计");
+    }
   }
   const fmt = v => (v==null?"—":(v>=0?"+":"")+v.toFixed(1));
 
@@ -547,11 +559,13 @@
   }
   function makeScene3D(canvas){
     const ctx=canvas.getContext("2d");
-    const cam={az:0.72, el:0.92};
+    const cam={az:0.72, el:0.92}, camT={az:0.72, el:0.92};
+    const VIEWS={iso:{az:0.72,el:0.92}, top:{az:0.0,el:1.5}, front:{az:0.0,el:0.32}, side:{az:1.5708,el:0.34}};
     const SP=260, CS=170, CH=60, LYR=24, BASE_Y=-560;
     const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
     let W=1,H=1,dpr=1, fit={scale:1,ox:0,oy:0};
     let stations=[], done={}, active=null, faulted={}, effs={}, targets={}, drag=null, nStat=0;
+    let jointsById={}, kinById={}, hasJoints=false;
 
     const cellWorld=(r,c)=>({x:(c-(GRID.cols+1)/2)*SP, y:(r-1)*SP, z:0});
     const baseWorld=(i,n)=>({x:(i-(n-1)/2)*380, y:BASE_Y, z:0});
@@ -609,6 +623,23 @@
       ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke();}
     function dot(p,hex,r){const s=P(p); ctx.fillStyle=hex; ctx.beginPath(); ctx.arc(s.x,s.y,r,0,7); ctx.fill();}
 
+    // 正向运动学骨架：用实际六轴关节角(度)还原臂型。连杆长度可配(kin)，
+    // 非逐型号精确 DH——但六轴运动忠实反映真机。
+    const M3=(A,B)=>[0,1,2].map(i=>[0,1,2].map(j=>A[i][0]*B[0][j]+A[i][1]*B[1][j]+A[i][2]*B[2][j]));
+    const AP=(R,v)=>({x:R[0][0]*v.x+R[0][1]*v.y+R[0][2]*v.z, y:R[1][0]*v.x+R[1][1]*v.y+R[1][2]*v.z, z:R[2][0]*v.x+R[2][1]*v.y+R[2][2]*v.z});
+    function fk(b,q,kin){
+      const K=kin||{}, h0=K.h0||150, la=K.la||300, lb=K.lb||280, lt=K.lt||120, d=Math.PI/180;
+      const Rz=a=>[[Math.cos(a),-Math.sin(a),0],[Math.sin(a),Math.cos(a),0],[0,0,1]];
+      const Ry=a=>[[Math.cos(a),0,Math.sin(a)],[0,1,0],[-Math.sin(a),0,Math.cos(a)]];
+      const Rx=a=>[[1,0,0],[0,Math.cos(a),-Math.sin(a)],[0,Math.sin(a),Math.cos(a)]];
+      let R=Rz(q[0]*d);
+      const S={x:b.x,y:b.y,z:h0};
+      R=M3(R,Ry(q[1]*d)); const dA=AP(R,{x:la,y:0,z:0}); const E={x:S.x+dA.x,y:S.y+dA.y,z:S.z+dA.z};
+      R=M3(R,Ry(q[2]*d)); const dB=AP(R,{x:lb,y:0,z:0}); const Wp={x:E.x+dB.x,y:E.y+dB.y,z:E.z+dB.z};
+      R=M3(M3(R,Rx(q[3]*d)),Ry(q[4]*d)); const dT=AP(R,{x:lt,y:0,z:0}); const T={x:Wp.x+dT.x,y:Wp.y+dT.y,z:Wp.z+dT.z};
+      return {S,E,W:Wp,T};
+    }
+
     function ground(){
       const x0=(1-(GRID.cols+1)/2)*SP-CS, x1=(GRID.cols-(GRID.cols+1)/2)*SP+CS;
       const y0=BASE_Y-140, y1=(GRID.rows-1)*SP+CS;
@@ -630,25 +661,41 @@
     }
     function arms(){
       stations.forEach((s,i)=>{
-        const b=baseWorld(i,stations.length), e=effs[s.id]; if(!e) return;
+        const b=baseWorld(i,stations.length);
         const col=faulted[s.id]?"#FF5257":colorHex(s.id,i);
-        const sh={x:b.x,y:b.y,z:250}, el={x:(sh.x+e.x)/2,y:(sh.y+e.y)/2,z:Math.max(sh.z,e.z)+180};
         box(b.x,b.y,60,150,150,120,"#39454f",{topf:1.15});   // 底座
-        seg(sh,el,col,15); seg(el,e,col,13);
-        dot(sh,col,9); dot(el,col,8);
-        box(e.x,e.y,e.z,66,66,52,col,{topf:1.2});            // 末端夹具
+        const j=jointsById[s.id];
+        if(j && j.length>=6){
+          // 有真机关节角 → 正向运动学还原六轴姿态
+          const f=fk(b,j,kinById[s.id]);
+          seg(f.S,f.E,col,15); seg(f.E,f.W,col,13); seg(f.W,f.T,col,11);
+          dot(f.S,col,9); dot(f.E,col,8); dot(f.W,col,7);
+          box(f.T.x,f.T.y,f.T.z,60,60,48,col,{topf:1.2});
+        } else {
+          // 无关节角 → 两连杆缓动估计（DEMO / 未读到关节角时）
+          const e=effs[s.id]; if(!e) return;
+          const sh={x:b.x,y:b.y,z:250}, el={x:(sh.x+e.x)/2,y:(sh.y+e.y)/2,z:Math.max(sh.z,e.z)+180};
+          seg(sh,el,col,15); seg(el,e,col,13);
+          dot(sh,col,9); dot(el,col,8);
+          box(e.x,e.y,e.z,66,66,52,col,{topf:1.2});
+        }
       });
     }
     function draw(){ ctx.clearRect(0,0,W,H); ground(); carriers(); arms(); }
     function frame(){
       const k=reduce?1:0.16;
       for(const s of stations){const e=effs[s.id], t=targets[s.id]; if(e&&t){e.x+=(t.x-e.x)*k; e.y+=(t.y-e.y)*k; e.z+=(t.z-e.z)*k;}}
+      // 视角切换缓动
+      if(Math.abs(camT.az-cam.az)>1e-3 || Math.abs(camT.el-cam.el)>1e-3){
+        const c=reduce?1:0.2; cam.az+=(camT.az-cam.az)*c; cam.el+=(camT.el-cam.el)*c; refit();
+      }
       draw(); requestAnimationFrame(frame);
     }
 
     canvas.addEventListener("pointerdown",e=>{drag={x:e.clientX,y:e.clientY}; try{canvas.setPointerCapture(e.pointerId);}catch(_){}});
     canvas.addEventListener("pointermove",e=>{ if(!drag)return;
-      cam.az+=(e.clientX-drag.x)*0.008; cam.el=Math.max(0.4,Math.min(1.35,cam.el+(e.clientY-drag.y)*0.005));
+      cam.az+=(e.clientX-drag.x)*0.008; cam.el=Math.max(0.4,Math.min(1.5,cam.el+(e.clientY-drag.y)*0.005));
+      camT.az=cam.az; camT.el=cam.el;   // 拖拽时同步目标，避免回弹
       drag={x:e.clientX,y:e.clientY}; refit();});
     window.addEventListener("pointerup",()=>drag=null);
     if(window.ResizeObserver) new ResizeObserver(resize).observe(canvas); else window.addEventListener("resize",resize);
@@ -656,12 +703,16 @@
     resize(); requestAnimationFrame(frame);
 
     return {
+      setView(name){ const v=VIEWS[name]; if(v){ camT.az=v.az; camT.el=v.el; } },
+      hasJoints(){ return hasJoints; },
       update(st){
         stations=st.stations;
         if(stations.length!==nStat){ nStat=stations.length; refit(); }
         done={}; stations.forEach(s=>(s.done||[]).forEach(c=>{(done[c]=done[c]||[]).push(s.id);}));
         active=st.active?st.active.cell:null;
         faulted={}; stations.forEach(s=>{ if(s.status==="fault") faulted[s.id]=1; });
+        jointsById={}; kinById={}; hasJoints=false;
+        stations.forEach(s=>{ if(s.joints && s.joints.length>=6){ jointsById[s.id]=s.joints; kinById[s.id]=s.kin; hasJoints=true; } });
         stations.forEach((s,i)=>{
           const b=baseWorld(i,stations.length); let t;
           const cell=(s.target||"").match(/R(\d)C(\d)/);
@@ -705,7 +756,8 @@
       stations:(j.stations||[]).map(s=>({
         id:s.name, nm:s.label||s.name, br:s.brand||"",
         status:(s.status||"idle"), statusTxt:statusTxtFromLive(s),
-        target:s.target, vision:s.vision||{dx:0,dy:0,dth:0}, done:s.done||[], atHome:!!s.at_home
+        target:s.target, vision:s.vision||{dx:0,dy:0,dth:0}, done:s.done||[], atHome:!!s.at_home,
+        joints:s.joints||null, kin:s.kin||null
       })),
       zones:zonesFromLive(j.zones||{}),
       active:j.active||null, skips:j.skips||[],
@@ -750,6 +802,11 @@
   $("#btn-reset").addEventListener("click",()=>{ if(sim) sim.reset(); });
   $("#btn-fault").addEventListener("click",()=>{ if(sim) sim.injectFault(); });
   $("#spd").addEventListener("input",e=>{ speed=+e.target.value; $("#spd-v").textContent=speed+"×"; });
+  $("#v3dviews").addEventListener("click",e=>{
+    const b=e.target.closest("button"); if(!b)return;
+    [...e.currentTarget.children].forEach(x=>x.classList.toggle("on",x===b));
+    if(scene) scene.setView(b.dataset.v);
+  });
 
   // ---- boot ----
   buildStepper(); buildRowLabels();          // 网格/图例首帧由 render→ensureGrid 按工位建

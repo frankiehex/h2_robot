@@ -47,6 +47,7 @@ def load_stations(line_cfg: dict, poses_cfg: dict) -> list[StationRuntime]:
         )
         st.label = s.get("label", name)      # 看板显示名
         st.brand = s.get("brand", "")        # 看板品牌标签
+        st.kin = s["robot"].get("kin")       # 可选连杆长度(3D FK 逐型号更准)
         stations.append(st)
     return stations
 

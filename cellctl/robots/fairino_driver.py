@@ -60,6 +60,13 @@ class FairinoDriver(RobotArm):
         rc = self._robot.SetDO(self.grip_do, level)
         self._check(rc, "SetDO")
 
+    def read_joints(self):
+        """六轴关节角（度）—— 法奥 GetActualJointPosDegree 直接返回度。"""
+        rc = self._robot.GetActualJointPosDegree(0)
+        # 返回 (错误码, [j1..j6]) 或直接 [j1..j6]
+        data = rc[1] if isinstance(rc, (tuple, list)) and len(rc) == 2 and isinstance(rc[1], (list, tuple)) else rc
+        return list(data)
+
     @staticmethod
     def _check(rc, op: str) -> None:
         # 法奥 SDK 多数指令返回错误码（0 = 成功）；有的返回 (码, 数据)

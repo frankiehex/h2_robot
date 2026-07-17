@@ -73,3 +73,9 @@ class JakaDriver(RobotArm):
     def read_pose(self):
         """读当前 TCP 位姿（mm + 弧度），首触/标定用。"""
         return self._rc.get_tcp_position()
+
+    def read_joints(self):
+        """六轴关节角（度）—— JAKA get_joint_position 返回弧度，转度。"""
+        rc = self._rc.get_joint_position()
+        data = rc[1] if isinstance(rc, (tuple, list)) and len(rc) == 2 else rc
+        return [math.degrees(a) for a in data]

@@ -90,6 +90,11 @@ class RobotArm(abc.ABC):
         """读当前 TCP 位姿（首触/标定用）。真机驱动可覆盖；默认返回 None。"""
         return None
 
+    def read_joints(self):
+        """读当前六轴关节角（**度**），供看板 3D 用实际关节角还原姿态。
+        真机驱动覆盖；默认返回 None（看板退回两连杆估计）。"""
+        return None
+
     # -- 组合动作（品牌无关，直接用原语拼） -----------------------------------
     def pick(self, wp: Waypoint, dx: float = 0.0, dy: float = 0.0, drz: float = 0.0) -> None:
         """取料：approach → 下探(含视觉偏差) → 吸/夹 → retreat。"""

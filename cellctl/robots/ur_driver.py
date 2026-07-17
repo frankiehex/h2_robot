@@ -75,3 +75,9 @@ class URDriver(RobotArm):
     def read_pose(self) -> list[float]:
         """读当前 TCP 位姿（米 + 旋转矢量），首触/标定用。"""
         return self._recv.getActualTCPPose()
+
+    def read_joints(self):
+        """六轴关节角（度）—— UR getActualQ 返回弧度，转度。"""
+        import math
+        q = self._recv.getActualQ()
+        return [math.degrees(a) for a in q]
