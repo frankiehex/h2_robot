@@ -13,6 +13,8 @@ grid:
 
 stations:
   - name: S3_ham             # 放火腿工位（视觉引导取料）
+    label: "S3 · 放火腿"      # 看板显示名
+    brand: "节卡 Zu7"         # 看板品牌标签
     robot:
       driver: sim            # sim | ur | jaka | fairino
       host: 192.168.1.101
@@ -28,6 +30,8 @@ stations:
     grid_zones: [Z_S3_GRID]  # 本臂放置时占用的窗口区
 
   - name: S5_egg             # 放蛋皮/起司工位
+    label: "S5 · 放蛋皮"      # 看板显示名
+    brand: "节卡 Zu7"         # 看板品牌标签
     robot:
       driver: sim
       host: 192.168.1.102

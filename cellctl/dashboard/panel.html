@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工位单元控制 · 操作看板</title>
+<style>
+  :root{
+    --bg:#0E141A; --panel:#151E26; --panel2:#1B2731; --line:#26333E;
+    --text:#DCE4EA; --muted:#82929E; --faint:#5A6A76;
+    --accent:#FFB020;              /* 信号琥珀：品牌 / 当前状态 / 焦点 */
+    --ok:#3DD68C; --fault:#FF5257; --idle:#64748B;
+    --ham:#FF7A5C; --egg:#F4C430;  /* 物料色：火腿 / 蛋皮 */
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI","Noto Sans SC",sans-serif;
+    --r:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 78% -8%, rgba(255,176,32,.06), transparent 60%),
+      var(--bg);
+    color:var(--text); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased; padding:18px; min-height:100vh;
+  }
+  .wrap{max-width:1240px; margin:0 auto; display:flex; flex-direction:column; gap:14px}
+
+  /* ---- header ---- */
+  header.bar{
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    padding:14px 18px; background:linear-gradient(180deg,var(--panel2),var(--panel));
+    border:1px solid var(--line); border-radius:var(--r);
+  }
+  .brand{display:flex; flex-direction:column; gap:3px; margin-right:auto}
+  .brand h1{margin:0; font-size:17px; font-weight:650; letter-spacing:.01em}
+  .brand .sub{font-size:11px; color:var(--muted); letter-spacing:.14em; text-transform:uppercase}
+  .mode{
+    font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.1em;
+    padding:4px 9px; border-radius:999px; border:1px solid var(--line);
+    display:inline-flex; align-items:center; gap:7px; white-space:nowrap;
+  }
+  .mode .dot{width:7px; height:7px; border-radius:50%; background:var(--accent);
+    box-shadow:0 0 0 0 rgba(255,176,32,.5); animation:beat 1.8s infinite}
+  .mode.live .dot{background:var(--ok); box-shadow:0 0 8px var(--ok); animation:beat 1.4s infinite}
+  @keyframes beat{0%,100%{opacity:1}50%{opacity:.35}}
+  .telem{display:flex; gap:22px}
+  .kpi{display:flex; flex-direction:column; gap:2px; min-width:74px}
+  .kpi .v{font-family:var(--mono); font-size:23px; font-weight:600; font-variant-numeric:tabular-nums; line-height:1}
+  .kpi .l{font-size:10px; color:var(--muted); letter-spacing:.12em; text-transform:uppercase}
+  .kpi .v small{font-size:12px; color:var(--faint); font-weight:500}
+
+  /* ---- state stepper ---- */
+  .stepper{
+    display:flex; align-items:stretch; gap:6px; padding:10px;
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
+    overflow-x:auto;
+  }
+  .step{
+    flex:1 1 0; min-width:96px; padding:9px 11px; border-radius:8px;
+    background:var(--panel2); border:1px solid transparent; position:relative;
+    display:flex; flex-direction:column; gap:4px;
+  }
+  .step .n{font-family:var(--mono); font-size:10px; color:var(--faint)}
+  .step .s{font-family:var(--mono); font-size:12.5px; color:var(--muted); letter-spacing:.02em}
+  .step.on{border-color:var(--accent); background:rgba(255,176,32,.10)}
+  .step.on .s{color:var(--accent); font-weight:600}
+  .step.on .n{color:var(--accent)}
+  .step.done .s{color:var(--text)}
+  .step.fault{border-color:var(--fault); background:rgba(255,82,87,.12)}
+  .step.fault .s,.step.fault .n{color:var(--fault)}
+
+  /* ---- main grid ---- */
+  .main{display:grid; grid-template-columns:270px 1fr 300px; gap:14px}
+  @media(max-width:1040px){.main{grid-template-columns:1fr}}
+  .col{display:flex; flex-direction:column; gap:14px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px}
+  .card h2{
+    margin:0 0 12px; font-size:11px; color:var(--muted);
+    letter-spacing:.16em; text-transform:uppercase; font-weight:600;
+    display:flex; align-items:center; gap:8px;
+  }
+  .card h2 .tag{margin-left:auto; font-family:var(--mono); letter-spacing:0; color:var(--faint); text-transform:none}
+
+  /* ---- station cards ---- */
+  .stn{padding-top:2px}
+  .stn + .stn{margin-top:12px; padding-top:14px; border-top:1px solid var(--line)}
+  .stn .top{display:flex; align-items:center; gap:9px; margin-bottom:9px}
+  .swatch{width:9px; height:9px; border-radius:2px; flex:none}
+  .stn .nm{font-weight:600; font-size:14px}
+  .stn .br{font-size:11px; color:var(--muted); margin-left:auto; font-family:var(--mono)}
+  .chip{
+    font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.06em;
+    padding:3px 8px; border-radius:6px; text-transform:uppercase;
+    border:1px solid var(--line); color:var(--muted); background:var(--panel2);
+  }
+  .chip.picking{color:var(--accent); border-color:rgba(255,176,32,.4); background:rgba(255,176,32,.08)}
+  .chip.placing{color:var(--accent); border-color:rgba(255,176,32,.4); background:rgba(255,176,32,.08)}
+  .chip.home{color:var(--ok); border-color:rgba(61,214,140,.4); background:rgba(61,214,140,.08)}
+  .chip.fault{color:var(--fault); border-color:rgba(255,82,87,.45); background:rgba(255,82,87,.1)}
+  .rows{display:flex; flex-direction:column; gap:6px; font-size:12px}
+  .rows .r{display:flex; justify-content:space-between; align-items:center; gap:8px}
+  .rows .k{color:var(--muted)}
+  .rows .val{font-family:var(--mono); color:var(--text); font-variant-numeric:tabular-nums}
+  .vis{display:flex; gap:10px}
+  .vis span{font-family:var(--mono); color:var(--faint); font-size:11.5px}
+  .vis b{color:var(--text); font-weight:600}
+  .home-ind{display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11px}
+  .home-ind .d{width:7px; height:7px; border-radius:50%; background:var(--idle)}
+  .home-ind.yes .d{background:var(--ok); box-shadow:0 0 7px var(--ok)}
+
+  /* ---- carrier window (hero) ---- */
+  .winwrap{display:flex; flex-direction:column; gap:12px}
+  .grid{
+    display:grid; gap:9px;
+    grid-template-columns:repeat(var(--cols,4),1fr);
+  }
+  .cell{
+    aspect-ratio:5/4; border-radius:9px; border:1px solid var(--line);
+    background:var(--panel2); padding:9px; position:relative;
+    display:flex; flex-direction:column; justify-content:space-between;
+    transition:border-color .2s, background .2s, transform .2s;
+  }
+  .cell .cid{font-family:var(--mono); font-size:11px; color:var(--faint)}
+  .cell.queued{opacity:.42}
+  .cell.queued .cid{color:var(--faint)}
+  .cell.active{border-color:var(--accent); background:rgba(255,176,32,.07); transform:translateY(-2px);
+    box-shadow:0 6px 18px -8px rgba(255,176,32,.5)}
+  .cell.active .cid{color:var(--accent)}
+  .cell.skip{border-color:var(--fault); background:rgba(255,82,87,.07)}
+  .cell.skip .cid{color:var(--fault)}
+  .pips{display:flex; gap:5px}
+  .pip{width:14px; height:14px; border-radius:4px; border:1px solid rgba(255,255,255,.14);
+    opacity:.22; transition:opacity .2s, transform .2s}
+  .pip.on{opacity:1}
+  .pip.pop{animation:pop .35s ease}
+  @keyframes pop{0%{transform:scale(.2)}60%{transform:scale(1.25)}100%{transform:scale(1)}}
+  .winmeta{display:flex; align-items:center; gap:16px; flex-wrap:wrap}
+  .legend{display:flex; gap:14px; margin-left:auto}
+  .legend .li{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); font-family:var(--mono)}
+  .legend .sw{width:11px; height:11px; border-radius:3px}
+  .rowlabels{display:flex; gap:9px; font-family:var(--mono); font-size:10px; color:var(--faint)}
+  .rowtag{padding:2px 7px; border:1px solid var(--line); border-radius:5px}
+  .rowtag.act{color:var(--accent); border-color:rgba(255,176,32,.4)}
+
+  /* ---- zones ---- */
+  .zone{display:flex; align-items:center; gap:9px; padding:8px 0; font-size:12.5px}
+  .zone + .zone{border-top:1px solid var(--line)}
+  .zone .zn{font-family:var(--mono); color:var(--text)}
+  .zone .zd{color:var(--faint); font-size:10.5px; margin-left:2px}
+  .zone .own{margin-left:auto; font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:5px;
+    color:var(--faint); border:1px solid var(--line)}
+  .zone.held .own{color:var(--accent); border-color:rgba(255,176,32,.4); background:rgba(255,176,32,.08)}
+  .zone .lk{width:8px; height:8px; border-radius:2px; background:var(--line)}
+  .zone.held .lk{background:var(--accent); box-shadow:0 0 7px var(--accent)}
+
+  /* ---- log ---- */
+  .log{display:flex; flex-direction:column; gap:0; font-family:var(--mono); font-size:11.5px; max-height:210px; overflow:hidden}
+  .log .ln{display:flex; gap:9px; padding:4px 0; border-top:1px solid rgba(38,51,62,.5); color:var(--muted)}
+  .log .ln:first-child{border-top:0}
+  .log .ln.new{color:var(--text); animation:fadein .4s ease}
+  .log .ln .t{color:var(--faint); flex:none}
+  .log .ln.fault{color:var(--fault)}
+  @keyframes fadein{from{opacity:0;transform:translateY(-3px)}to{opacity:1}}
+
+  /* ---- controls ---- */
+  .controls{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    padding:12px 16px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
+  }
+  .controls .grp{display:flex; align-items:center; gap:9px}
+  .controls .lbl{font-size:11px; color:var(--muted); letter-spacing:.1em; text-transform:uppercase}
+  button{
+    font-family:var(--sans); font-size:13px; font-weight:600; color:var(--text);
+    background:var(--panel2); border:1px solid var(--line); border-radius:8px;
+    padding:8px 14px; cursor:pointer; transition:border-color .15s, background .15s, color .15s;
+  }
+  button:hover{border-color:var(--accent); color:var(--accent)}
+  button.primary{background:rgba(255,176,32,.12); border-color:rgba(255,176,32,.5); color:var(--accent)}
+  button.danger:hover{border-color:var(--fault); color:var(--fault)}
+  button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  input[type=range]{accent-color:var(--accent); cursor:pointer}
+  .spd{font-family:var(--mono); font-size:12px; color:var(--text); min-width:34px; font-variant-numeric:tabular-nums}
+  .note{margin-left:auto; font-size:11px; color:var(--faint); font-family:var(--mono)}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <div class="brand">
+      <h1>工位单元控制 · 操作看板</h1>
+      <span class="sub">Cell Controller · Operator Panel</span>
+    </div>
+    <div class="telem">
+      <div class="kpi"><span class="v" id="k-cycle">0</span><span class="l">节拍 Cycle</span></div>
+      <div class="kpi"><span class="v" id="k-tput">—<small> /h</small></span><span class="l">产能 Throughput</span></div>
+      <div class="kpi"><span class="v" id="k-time">—<small> s</small></span><span class="l">节拍用时 Cycle t</span></div>
+    </div>
+    <span class="mode" id="mode"><span class="dot"></span><span id="mode-txt">DEMO</span></span>
+  </header>
+
+  <div class="stepper" id="stepper"></div>
+
+  <div class="main">
+    <!-- left: stations -->
+    <div class="col">
+      <div class="card">
+        <h2>机械臂 Arms <span class="tag" id="arm-count"></span></h2>
+        <div id="stations"></div>
+      </div>
+    </div>
+
+    <!-- center: carrier window -->
+    <div class="col">
+      <div class="card winwrap">
+        <h2>载具窗口 Carrier Window <span class="tag" id="grid-dims"></span></h2>
+        <div class="rowlabels" id="rowlabels"></div>
+        <div class="grid" id="grid" style="--cols:4"></div>
+        <div class="winmeta">
+          <div class="rowtag act">R1 · 作业行 active</div>
+          <div class="legend">
+            <div class="li"><span class="sw" style="background:var(--ham)"></span>火腿 S3</div>
+            <div class="li"><span class="sw" style="background:var(--egg)"></span>蛋皮 S5</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- right: zones + log -->
+    <div class="col">
+      <div class="card">
+        <h2>区域互锁 Zone Locks</h2>
+        <div id="zones"></div>
+      </div>
+      <div class="card">
+        <h2>事件 Event Log</h2>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls" id="controls">
+    <div class="grp">
+      <button class="primary" id="btn-play">暂停 Pause</button>
+      <button id="btn-reset">复位 Reset</button>
+      <button class="danger" id="btn-fault">注入故障 Fault</button>
+    </div>
+    <div class="grp">
+      <span class="lbl">速度 Speed</span>
+      <input type="range" id="spd" min="1" max="20" value="8" step="1">
+      <span class="spd" id="spd-v">8×</span>
+    </div>
+    <span class="note" id="note">DEMO · 网页内仿真（未连接控制器）</span>
+  </div>
+</div>
+
+<script>
+"use strict";
+(function(){
+  // ---- model constants (mirror cellctl config) ----
+  const PHASES = [
+    ["01","WAIT_LOCK"],["02","CAPTURE"],["03","DISPATCH"],
+    ["04","EXECUTING"],["05","ADVANCE"]
+  ];
+  const GRID = {rows:3, cols:4};
+  const STATIONS = [
+    {id:"S3_ham", nm:"S3 · 放火腿", br:"节卡 Zu7", color:"var(--ham)",
+     feed:"Z_S3_FEED", zgrid:"Z_S3_GRID"},
+    {id:"S5_egg", nm:"S5 · 放蛋皮", br:"节卡 Zu7", color:"var(--egg)",
+     feed:"Z_S5_FEED", zgrid:"Z_S5_GRID"}
+  ];
+  const ZONES = [
+    {id:"Z_S3_FEED", d:"火腿出料托板"},{id:"Z_S3_GRID", d:"S3 窗口"},
+    {id:"Z_S5_FEED", d:"蛋皮出料带"},{id:"Z_S5_GRID", d:"S5 窗口"}
+  ];
+  const COLOR = {S3_ham:"var(--ham)", S5_egg:"var(--egg)"};
+
+  // ---- DOM refs ----
+  const $ = s => document.querySelector(s);
+  const stepperEl=$("#stepper"), stationsEl=$("#stations"), gridEl=$("#grid"),
+        zonesEl=$("#zones"), logEl=$("#log"), rowLabelsEl=$("#rowlabels");
+
+  // build static scaffolding
+  function buildStepper(){
+    stepperEl.innerHTML = PHASES.map(([n,s])=>
+      `<div class="step" data-s="${s}"><span class="n">${n}</span><span class="s">${s}</span></div>`).join("");
+  }
+  function buildRowLabels(){
+    let h="";
+    for(let r=1;r<=GRID.rows;r++) h+=`<div class="rowtag ${r===1?'act':''}">R${r}</div>`;
+    rowLabelsEl.innerHTML=h;
+  }
+  function buildGrid(){
+    gridEl.style.setProperty("--cols",GRID.cols);
+    let h="";
+    for(let r=1;r<=GRID.rows;r++) for(let c=1;c<=GRID.cols;c++){
+      const id=`R${r}C${c}`, queued=r>1?"queued":"";
+      h+=`<div class="cell ${queued}" data-id="${id}"><span class="cid">${id}</span>`
+        +`<div class="pips"><span class="pip" data-st="S3_ham" style="background:var(--ham)"></span>`
+        +`<span class="pip" data-st="S5_egg" style="background:var(--egg)"></span></div></div>`;
+    }
+    gridEl.innerHTML=h;
+  }
+
+  // ---- render (pure: paints DOM from a state object) ----
+  function render(st){
+    $("#k-cycle").textContent = st.cycle;
+    $("#k-tput").innerHTML = st.throughput ? st.throughput+`<small> /h</small>` : "—<small> /h</small>";
+    $("#k-time").innerHTML = st.cycleTime ? st.cycleTime.toFixed(1)+`<small> s</small>` : "—<small> s</small>";
+
+    // stepper
+    const order = PHASES.map(p=>p[1]);
+    const cur = order.indexOf(st.phase);
+    [...stepperEl.children].forEach((el,i)=>{
+      el.className = "step" + (st.phase==="FAULT" && i===cur ? "" :
+        i===cur ? " on" : i<cur ? " done" : "");
+    });
+    if(st.phase==="FAULT"){
+      // mark EXECUTING slot as fault
+      const ex = stepperEl.querySelector('[data-s="EXECUTING"]');
+      if(ex) ex.className="step fault";
+    }
+
+    // stations
+    $("#arm-count").textContent = st.stations.length+" 台";
+    stationsEl.innerHTML = st.stations.map(s=>{
+      const v=s.vision||{};
+      const homeCls = s.atHome ? "yes":"";
+      return `<div class="stn">
+        <div class="top">
+          <span class="swatch" style="background:${COLOR[s.id]}"></span>
+          <span class="nm">${s.nm}</span>
+          <span class="br">${s.br}</span>
+        </div>
+        <div class="rows">
+          <div class="r"><span class="k">状态</span><span class="chip ${s.status}">${s.statusTxt}</span></div>
+          <div class="r"><span class="k">目标</span><span class="val">${s.target||"—"}</span></div>
+          <div class="r"><span class="k">视觉偏差</span>
+            <span class="vis">
+              <span>dx <b>${fmt(v.dx)}</b></span><span>dy <b>${fmt(v.dy)}</b></span><span>dθ <b>${fmt(v.dth)}</b></span>
+            </span></div>
+          <div class="r"><span class="k">本节拍完成</span><span class="val">${s.done.length}/${GRID.cols}</span></div>
+          <div class="r"><span class="k">安全岛 HOME</span>
+            <span class="home-ind ${homeCls}"><span class="d"></span>${s.atHome?"在位":"离位"}</span></div>
+        </div>
+      </div>`;
+    }).join("");
+
+    // grid pips
+    const doneBy = {}; // cellId -> [stationIds]
+    st.stations.forEach(s=> s.done.forEach(c=>{ (doneBy[c]=doneBy[c]||[]).push(s.id); }));
+    [...gridEl.children].forEach(cell=>{
+      const id=cell.dataset.id;
+      const isActive = st.active && st.active.cell===id;
+      const isSkip = st.skips && st.skips.includes(id);
+      cell.classList.toggle("active", !!isActive);
+      cell.classList.toggle("skip", !!isSkip);
+      const dset = doneBy[id]||[];
+      cell.querySelectorAll(".pip").forEach(p=>{
+        const on = dset.includes(p.dataset.st);
+        if(on && !p.classList.contains("on")) p.classList.add("pop");
+        p.classList.toggle("on", on);
+      });
+    });
+
+    // zones
+    zonesEl.innerHTML = st.zones.map(z=>{
+      const held = !!z.owner;
+      return `<div class="zone ${held?'held':''}">
+        <span class="lk"></span>
+        <span class="zn">${z.id}<span class="zd"> · ${z.d}</span></span>
+        <span class="own">${held? z.owner : "FREE"}</span>
+      </div>`;
+    }).join("");
+
+    // log
+    logEl.innerHTML = st.log.slice(0,9).map((e,i)=>
+      `<div class="ln ${i===0?'new':''} ${e.fault?'fault':''}"><span class="t">${e.t}</span><span>${e.msg}</span></div>`
+    ).join("");
+  }
+  const fmt = v => (v==null?"—":(v>=0?"+":"")+v.toFixed(1));
+
+  // ================= DEMO SIMULATION =================
+  // Faithfully steps the cellctl state machine in the browser.
+  function makeSim(){
+    const cells = []; for(let c=1;c<=GRID.cols;c++) cells.push(`R1C${c}`); // scan row1
+    const S = {
+      phase:"WAIT_LOCK", cycle:0, cycleTime:0, throughput:0,
+      stations:STATIONS.map(s=>({...s, status:"idle", statusTxt:"IDLE",
+        target:null, vision:{dx:0,dy:0,dth:0}, done:[], atHome:true})),
+      zones:ZONES.map(z=>({...z, owner:null})),
+      log:[], active:null, skips:[],
+      _clock:0, _phaseT:0, _faultReq:false,
+      _queues:null, _idx:null, _t0:0
+    };
+    const zoneOf = id => S.zones.find(z=>z.id===id);
+    const push = (msg,fault)=>{ S.log.unshift({t:S._clock.toFixed(1)+"s", msg, fault}); if(S.log.length>30)S.log.pop(); };
+
+    function setPhase(p){ S.phase=p; S._phaseT=0; }
+    function startCycle(){
+      S.stations.forEach(s=>{ s.done=[]; s.atHome=false; s.status="idle"; s.statusTxt="IDLE"; s.target=null; });
+      S.skips=[]; S.active=null; S._t0=S._clock;
+      S._queues={}; S._idx={};
+      S.stations.forEach(s=>{
+        const q=[]; cells.forEach(c=>{ q.push({a:"pick",cell:c}); q.push({a:"place",cell:c}); });
+        q.push({a:"home"});
+        S._queues[s.id]=q; S._idx[s.id]=0;
+      });
+    }
+
+    // advance one logical tick (dt seconds)
+    function tick(dt){
+      S._clock+=dt; S._phaseT+=dt;
+      switch(S.phase){
+        case "WAIT_LOCK":
+          if(S._phaseT>=0.6){ push("[line] 到位锁定"); setPhase("CAPTURE"); }
+          break;
+        case "CAPTURE":
+          if(S._phaseT>=0.5){ push("[vision] 触发相机 · 逐格定位"); setPhase("DISPATCH"); }
+          break;
+        case "DISPATCH":
+          if(S._phaseT>=0.4){ push(`本节拍任务: ${S.stations.length*cells.length} 个 (行 R1 · 蛇形)`); startCycle(); setPhase("EXECUTING"); }
+          break;
+        case "EXECUTING":
+          stepExec(dt); break;
+        case "ADVANCE":
+          if(S._phaseT>=0.5){
+            S.cycle++; S.cycleTime=+(S._clock-S._t0).toFixed(1);
+            S.throughput=Math.round(GRID.cols*3600/Math.max(S.cycleTime,1));
+            S.zones.forEach(z=>z.owner=null); S.active=null;
+            push(`节拍 #${S.cycle} 完成 · ${S.cycleTime.toFixed(1)}s`);
+            setPhase("WAIT_LOCK");
+          }
+          break;
+        case "FAULT": /* wait for reset */ break;
+      }
+    }
+
+    // per-station micro-actions run in parallel; ~0.5s pick, ~0.5s place
+    const ACT_T = 0.55;
+    function stepExec(dt){
+      let allDone=true, active=null;
+      for(const s of S.stations){
+        const q=S._queues[s.id]; let i=S._idx[s.id];
+        if(i>=q.length){ continue; }
+        allDone=false;
+        s._at = (s._at||0)+dt;
+        const act=q[i];
+        // set live status/zone for current action
+        if(act.a==="pick"){
+          s.status="picking"; s.statusTxt="PICKING"; s.target=s.feed;
+          zoneOf(s.feed).owner=s.id;
+          if(s._justStarted!==i){ s.vision={dx:rand(-6,6),dy:rand(-6,6),dth:rand(-8,8)}; s._justStarted=i; }
+          active=active||{cell:act.cell};
+        } else if(act.a==="place"){
+          s.status="placing"; s.statusTxt="PLACING"; s.target=act.cell;
+          zoneOf(s.feed).owner=null; zoneOf(s.zgrid).owner=s.id;
+          active={cell:act.cell};
+        } else if(act.a==="home"){
+          s.status="home"; s.statusTxt="HOME"; s.target="HOME";
+          zoneOf(s.zgrid).owner=null;
+        }
+        // complete action
+        if(s._at>=ACT_T){
+          s._at=0; s._justStarted=-1;
+          if(act.a==="place"){
+            // small chance of low vision score -> skip (mirrors min_score gate)
+            if(Math.random()<0.05){
+              S.skips.push(act.cell); zoneOf(s.zgrid).owner=null;
+              push(`[${s.id}] 格 ${act.cell} 来料异常(score低) 跳过`, false);
+            } else {
+              s.done.push(act.cell); zoneOf(s.zgrid).owner=null;
+              push(`[${s.id}] 完成 ${act.cell} (dx${fmt(s.vision.dx)} dy${fmt(s.vision.dy)} dθ${fmt(s.vision.dth)})`);
+            }
+          } else if(act.a==="home"){
+            if(S._faultReq && s.id==="S5_egg"){
+              // injected fault: this arm fails to reach HOME
+              s.status="fault"; s.statusTxt="FAULT"; s.atHome=false;
+            } else { s.atHome=true; }
+          }
+          S._idx[s.id]=i+1;
+        }
+      }
+      S.active=active;
+      if(allDone){
+        // step-before-advance HOME guard (mirrors controller)
+        const notHome=S.stations.filter(s=>!s.atHome);
+        if(notHome.length){
+          push(`步进前有臂不在 HOME: ${notHome.map(s=>s.id).join(",")} — 禁止步进`, true);
+          setPhase("FAULT");
+        } else {
+          push("[line] 各臂已回 HOME · 允许步进"); setPhase("ADVANCE");
+        }
+      }
+    }
+
+    function injectFault(){ S._faultReq=true; push("⚠ 已请求注入故障（下次回HOME失败）"); }
+    function reset(){
+      S._faultReq=false; S.skips=[];
+      S.stations.forEach(s=>{ s.status="idle"; s.statusTxt="IDLE"; s.atHome=true; s.target=null; });
+      S.zones.forEach(z=>z.owner=null);
+      if(S.phase==="FAULT"){ push("故障已复位 · 恢复运行"); setPhase("WAIT_LOCK"); }
+    }
+    return {S, tick, injectFault, reset};
+  }
+  const rand = (a,b)=> +(a+Math.random()*(b-a)).toFixed(1);
+
+  // ================= DRIVER =================
+  let sim=null, live=false, playing=true, speed=8, timer=null;
+
+  function statusTxtFromLive(s){
+    return (s.status||"idle").toUpperCase();
+  }
+
+  async function tryLive(){
+    try{
+      const r = await fetch("state.json", {cache:"no-store"});
+      if(!r.ok) throw 0;
+      const j = await r.json();
+      if(!j || !j.stations) throw 0;
+      return j;
+    }catch(e){ return null; }
+  }
+
+  function toRenderState(j){
+    // normalize a live payload into the render shape
+    return {
+      phase:(j.state||"wait_lock").toUpperCase().replace("WAIT_LINE_LOCKED","WAIT_LOCK"),
+      cycle:j.cycle||0, cycleTime:j.cycle_time_s||0, throughput:j.throughput_pph||0,
+      stations:(j.stations||[]).map(s=>({
+        id:s.name, nm:s.label||s.name, br:s.brand||"", color:COLOR[s.name],
+        status:(s.status||"idle"), statusTxt:statusTxtFromLive(s),
+        target:s.target, vision:s.vision||{dx:0,dy:0,dth:0}, done:s.done||[], atHome:!!s.at_home
+      })),
+      zones:(ZONES).map(z=>({...z, owner:(j.zones||{})[z.id]||null})),
+      active:j.active||null, skips:j.skips||[],
+      log:(j.log||[]).map(m=> typeof m==="string"?{t:"",msg:m}:m)
+    };
+  }
+
+  function loop(){
+    if(live){
+      tryLive().then(j=>{ if(j) render(toRenderState(j)); });
+    } else if(playing && sim){
+      // multiple logical ticks per frame, scaled by speed
+      const steps = speed;
+      for(let i=0;i<steps;i++) sim.tick(0.12);
+      const st=sim.S;
+      render({
+        phase:st.phase, cycle:st.cycle, cycleTime:st.cycleTime, throughput:st.throughput,
+        stations:st.stations, zones:st.zones, active:st.active, skips:st.skips, log:st.log
+      });
+    }
+  }
+
+  function setMode(isLive){
+    live=isLive;
+    const m=$("#mode"), t=$("#mode-txt"), note=$("#note"), ctl=$("#controls");
+    if(isLive){
+      m.classList.add("live"); t.textContent="LIVE";
+      note.textContent="LIVE · 已连接控制器 (state.json)";
+      // hide sim-only controls, keep speed hidden
+      $("#btn-play").style.display=$("#btn-reset").style.display=$("#btn-fault").style.display="none";
+      document.querySelectorAll(".controls .grp")[1].style.display="none";
+    }else{
+      m.classList.remove("live"); t.textContent="DEMO";
+    }
+  }
+
+  // ---- controls ----
+  $("#btn-play").addEventListener("click",()=>{
+    playing=!playing; $("#btn-play").textContent=playing?"暂停 Pause":"运行 Play";
+    $("#btn-play").classList.toggle("primary",playing);
+  });
+  $("#btn-reset").addEventListener("click",()=>{ if(sim) sim.reset(); });
+  $("#btn-fault").addEventListener("click",()=>{ if(sim) sim.injectFault(); });
+  $("#spd").addEventListener("input",e=>{ speed=+e.target.value; $("#spd-v").textContent=speed+"×"; });
+
+  // ---- boot ----
+  buildStepper(); buildRowLabels(); buildGrid();
+  $("#grid-dims").textContent = `${GRID.rows}×${GRID.cols}`;
+  tryLive().then(j=>{
+    if(j){ setMode(true); render(toRenderState(j)); }
+    else { setMode(false); sim=makeSim(); }
+    timer=setInterval(loop, 130);
+  });
+})();
+</script>
+</body>
+</html>

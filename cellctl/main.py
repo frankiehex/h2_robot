@@ -1,16 +1,20 @@
 """入口：加载配置 → 组装工位 → 仿真跑 N 个节拍。
 
 无硬件验证:  python -m cellctl.main --cycles 3
+带看板:      python -m cellctl.main --dashboard --cycles 50
+             然后浏览器打开 http://127.0.0.1:8700 看实时状态。
 重点看: 状态流转、互锁 [lock] 日志、步进前的回 HOME 检查。
 """
 from __future__ import annotations
 
 import argparse
 import logging
+import time
 from pathlib import Path
 
 import yaml
 
+from .dashboard import DashboardServer, StateStore
 from .robots import Waypoint, create_arm
 from .scheduler import CellController, SimLineIO, StationRuntime, ZoneLockManager
 from .vision.locator import FakeLocator
@@ -37,10 +41,13 @@ def load_stations(line_cfg: dict, poses_cfg: dict) -> list[StationRuntime]:
             raise NotImplementedError("真机视觉接入见 docs/cell-control-design.md §5")
         locator = FakeLocator()
 
-        stations.append(StationRuntime(
+        st = StationRuntime(
             name=name, arm=arm, pick_wp=pick_wp, grid_wps=grid_wps,
             locator=locator, min_score=vis_cfg.get("min_score", 0.5),
-        ))
+        )
+        st.label = s.get("label", name)      # 看板显示名
+        st.brand = s.get("brand", "")        # 看板品牌标签
+        stations.append(st)
     return stations
 
 
@@ -49,6 +56,8 @@ def main() -> None:
     ap.add_argument("--cycles", type=int, default=3, help="跑几个步进节拍")
     ap.add_argument("--config", default=str(PKG_DIR / "config" / "line.yaml"))
     ap.add_argument("--poses", default=str(PKG_DIR / "config" / "grid_poses.yaml"))
+    ap.add_argument("--dashboard", action="store_true", help="起操作看板 HTTP 服务")
+    ap.add_argument("--port", type=int, default=8700, help="看板端口")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -62,17 +71,33 @@ def main() -> None:
 
     stations = load_stations(line_cfg, poses_cfg)
     locks = ZoneLockManager([z["name"] for z in line_cfg["zones"]])
+
+    store = server = None
+    if args.dashboard:
+        store = StateStore(line_cfg["grid"])
+        server = DashboardServer(store, port=args.port)
+        server.start()
+
     ctrl = CellController(
         stations=stations, locks=locks, line=SimLineIO(),
-        grid_cfg=line_cfg["grid"], line_cfg=line_cfg["line"],
+        grid_cfg=line_cfg["grid"], line_cfg=line_cfg["line"], store=store,
     )
 
     for _ in range(args.cycles):
         ctrl.run_cycle()
+        if args.dashboard:
+            time.sleep(1.0)  # 放慢节拍便于在看板上观察
 
     for st in stations:
         st.arm.disconnect()
     logging.info("仿真结束: %d 个节拍全部完成", ctrl.cycle_count)
+    if server:
+        logging.info("看板仍在运行，Ctrl-C 退出。")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            server.stop()
 
 
 if __name__ == "__main__":
