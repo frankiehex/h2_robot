@@ -219,10 +219,7 @@
         <div class="grid" id="grid" style="--cols:4"></div>
         <div class="winmeta">
           <div class="rowtag act">R1 · 作业行 active</div>
-          <div class="legend">
-            <div class="li"><span class="sw" style="background:var(--ham)"></span>火腿 S3</div>
-            <div class="li"><span class="sw" style="background:var(--egg)"></span>蛋皮 S5</div>
-          </div>
+          <div class="legend" id="legend"></div>
         </div>
       </div>
     </div>
@@ -274,7 +271,10 @@
     {id:"Z_S3_FEED", d:"火腿出料托板"},{id:"Z_S3_GRID", d:"S3 窗口"},
     {id:"Z_S5_FEED", d:"蛋皮出料带"},{id:"Z_S5_GRID", d:"S5 窗口"}
   ];
-  const COLOR = {S3_ham:"var(--ham)", S5_egg:"var(--egg)"};
+  // 已知工位用物料色；其余按顺序取调色板 —— 支持任意品牌/数量的混合车队
+  const KNOWN = {S3_ham:"var(--ham)", S5_egg:"var(--egg)"};
+  const PALETTE = ["#FF7A5C","#F4C430","#5AA9FF","#B891FF","#3DD68C","#FF9F1C","#E86AA6"];
+  const colorFor = (id, idx) => KNOWN[id] || PALETTE[idx % PALETTE.length];
 
   // ---- DOM refs ----
   const $ = s => document.querySelector(s);
@@ -291,20 +291,31 @@
     for(let r=1;r<=GRID.rows;r++) h+=`<div class="rowtag ${r===1?'act':''}">R${r}</div>`;
     rowLabelsEl.innerHTML=h;
   }
-  function buildGrid(){
+  let _gridSig = null;              // 当前网格所依据的工位签名
+  function buildGrid(stations){
     gridEl.style.setProperty("--cols",GRID.cols);
     let h="";
     for(let r=1;r<=GRID.rows;r++) for(let c=1;c<=GRID.cols;c++){
       const id=`R${r}C${c}`, queued=r>1?"queued":"";
+      const pips = stations.map((s,i)=>
+        `<span class="pip" data-st="${s.id}" style="background:${colorFor(s.id,i)}"></span>`).join("");
       h+=`<div class="cell ${queued}" data-id="${id}"><span class="cid">${id}</span>`
-        +`<div class="pips"><span class="pip" data-st="S3_ham" style="background:var(--ham)"></span>`
-        +`<span class="pip" data-st="S5_egg" style="background:var(--egg)"></span></div></div>`;
+        +`<div class="pips">${pips}</div></div>`;
     }
     gridEl.innerHTML=h;
+    // 图例随工位动态生成
+    document.getElementById("legend").innerHTML = stations.map((s,i)=>
+      `<div class="li"><span class="sw" style="background:${colorFor(s.id,i)}"></span>${s.nm||s.id}</div>`).join("");
+    _gridSig = stations.map(s=>s.id).join(",");
+  }
+  function ensureGrid(stations){
+    const sig = stations.map(s=>s.id).join(",");
+    if(sig !== _gridSig) buildGrid(stations);
   }
 
   // ---- render (pure: paints DOM from a state object) ----
   function render(st){
+    ensureGrid(st.stations);           // 工位集变化时重建网格/图例（车队自适应）
     $("#k-cycle").textContent = st.cycle;
     $("#k-tput").innerHTML = st.throughput ? st.throughput+`<small> /h</small>` : "—<small> /h</small>";
     $("#k-time").innerHTML = st.cycleTime ? st.cycleTime.toFixed(1)+`<small> s</small>` : "—<small> s</small>";
@@ -324,12 +335,12 @@
 
     // stations
     $("#arm-count").textContent = st.stations.length+" 台";
-    stationsEl.innerHTML = st.stations.map(s=>{
+    stationsEl.innerHTML = st.stations.map((s,i)=>{
       const v=s.vision||{};
       const homeCls = s.atHome ? "yes":"";
       return `<div class="stn">
         <div class="top">
-          <span class="swatch" style="background:${COLOR[s.id]}"></span>
+          <span class="swatch" style="background:${colorFor(s.id,i)}"></span>
           <span class="nm">${s.nm}</span>
           <span class="br">${s.br}</span>
         </div>
@@ -523,17 +534,22 @@
     }catch(e){ return null; }
   }
 
+  const ZDESC = Object.fromEntries(ZONES.map(z=>[z.id, z.d]));
+  function zonesFromLive(owners){
+    // 服务端 zones = {zoneId: owner|null}；顺序稳定，描述取已知表
+    return Object.keys(owners).map(id=>({id, d:ZDESC[id]||"", owner:owners[id]||null}));
+  }
   function toRenderState(j){
     // normalize a live payload into the render shape
     return {
       phase:(j.state||"wait_lock").toUpperCase().replace("WAIT_LINE_LOCKED","WAIT_LOCK"),
       cycle:j.cycle||0, cycleTime:j.cycle_time_s||0, throughput:j.throughput_pph||0,
       stations:(j.stations||[]).map(s=>({
-        id:s.name, nm:s.label||s.name, br:s.brand||"", color:COLOR[s.name],
+        id:s.name, nm:s.label||s.name, br:s.brand||"",
         status:(s.status||"idle"), statusTxt:statusTxtFromLive(s),
         target:s.target, vision:s.vision||{dx:0,dy:0,dth:0}, done:s.done||[], atHome:!!s.at_home
       })),
-      zones:(ZONES).map(z=>({...z, owner:(j.zones||{})[z.id]||null})),
+      zones:zonesFromLive(j.zones||{}),
       active:j.active||null, skips:j.skips||[],
       log:(j.log||[]).map(m=> typeof m==="string"?{t:"",msg:m}:m)
     };
@@ -578,7 +594,7 @@
   $("#spd").addEventListener("input",e=>{ speed=+e.target.value; $("#spd-v").textContent=speed+"×"; });
 
   // ---- boot ----
-  buildStepper(); buildRowLabels(); buildGrid();
+  buildStepper(); buildRowLabels();          // 网格/图例首帧由 render→ensureGrid 按工位建
   $("#grid-dims").textContent = `${GRID.rows}×${GRID.cols}`;
   tryLive().then(j=>{
     if(j){ setMode(true); render(toRenderState(j)); }

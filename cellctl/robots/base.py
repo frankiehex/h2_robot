@@ -86,6 +86,10 @@ class RobotArm(abc.ABC):
     def at_home(self) -> bool:
         return self._at_home
 
+    def read_pose(self):
+        """读当前 TCP 位姿（首触/标定用）。真机驱动可覆盖；默认返回 None。"""
+        return None
+
     # -- 组合动作（品牌无关，直接用原语拼） -----------------------------------
     def pick(self, wp: Waypoint, dx: float = 0.0, dy: float = 0.0, drz: float = 0.0) -> None:
         """取料：approach → 下探(含视觉偏差) → 吸/夹 → retreat。"""

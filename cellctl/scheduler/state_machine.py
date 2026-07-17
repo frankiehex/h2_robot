@@ -86,7 +86,10 @@ class CellController:
                 "done": done,
                 "at_home": st.arm.at_home,
             })
-        zones = dict(getattr(self.locks, "_owner", {}))
+        # 全量 zone 表（未持有 = None），供看板显示 FREE/持有者
+        all_zones = getattr(self.locks, "_locks", {})
+        owners = getattr(self.locks, "_owner", {})
+        zones = {z: owners.get(z) for z in all_zones}
         fields = {
             "state": self.state.value,
             "cycle": self.cycle_count,

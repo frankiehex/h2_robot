@@ -14,7 +14,11 @@
 |---|---|---|
 | 整线概念设计 | ✅ | `docs/concept-design.md` |
 | 工位控制设计（视觉/防碰撞/逐格预演） | ✅ | `docs/cell-control-design.md` |
-| 三品牌统一驱动接口 | ✅ 接口定义完成，真机方法待填 | `cellctl/robots/` |
+| 三品牌统一驱动接口 | ✅ | `cellctl/robots/` |
+| 三款真机驱动（法奥 F5 / 节卡 A5 / UR7） | ✅ 方法已填实（含单位/姿态换算），待真机联调 | `cellctl/robots/{fairino,jaka,ur}_driver.py` |
+| 位姿约定换算（欧拉角↔旋转矢量/弧度） | ✅ 含自测 | `cellctl/robots/geometry.py` |
+| 混合车队部署配置示例 | ✅ | `cellctl/config/fleet.example.yaml` |
+| 单臂安全首触脚本 | ✅ | `cellctl/smoke_test.py` |
 | 仿真驱动（无硬件跑通全流程） | ✅ | `cellctl/robots/sim_driver.py` |
 | 主状态机 + 区域互锁 + 任务派发 | ✅ | `cellctl/scheduler/` |
 | 2D 标定 + 轮廓定位（算法骨架） | ✅ 逻辑完成，需真机数据 | `cellctl/vision/` |
@@ -65,16 +69,19 @@
 - [ ] 用示教器记录：HOME 安全岛、取料点、12 格放置点的 approach/pose/retreat，
       填进 `cellctl/config/grid_poses.yaml`（格式已定义好，照填即可）。
 
-**我做（软件）**
-- [ ] 填实选定品牌的驱动 `NotImplementedError`：
-  - UR → `cellctl/robots/ur_driver.py`（`move_to`/`go_home`/`grip`，含 mm↔m、欧拉角→旋转矢量换算）
-  - 法奥 → `cellctl/robots/fairino_driver.py`（`MoveL`/`MoveJ`/`SetDO`）
-  - 节卡 → `cellctl/robots/jaka_driver.py`（`linear_move`/`joint_move`/`set_digital_output`）
-- [ ] 加一层**软件安全包络**：工作空间限位、速度上限、急停看门狗。
-- [ ] `cellctl/config/line.yaml` 里把该工位 `driver: sim` 改成 `ur`/`fairino`/`jaka`。
+**我做（软件）** —— ✅ 三款驱动已填实，可直接联调：
+- [x] 三款真机驱动的 `move_to`/`go_home`/`grip`/`read_pose` 已实现，含各家单位/姿态换算：
+  - UR → `ur_driver.py`（米+旋转矢量；mm↔m、欧拉角→旋转矢量；moveL 带转弯区）
+  - 法奥 → `fairino_driver.py`（mm+度透传；MoveL/MoveJ/SetDO；vel 为百分比）
+  - 节卡 → `jaka_driver.py`（mm+弧度；linear_move(_extend)/joint_move/set_digital_output）
+- [x] 混合车队配置示例 `config/fleet.example.yaml`（法奥+节卡+UR 同线，每工位一款）。
+- [x] 单臂安全首触脚本 `smoke_test.py`（连接→读位姿→可选回HOME/夹爪，不碰产线）。
+- [ ] **待你在真机上做**：装对应品牌 SDK（`ur_rtde` / `fairino` / `jkrc`），
+      跑 `python -m cellctl.smoke_test --station <名> --config config/fleet.example.yaml` 首触。
+- [ ] 加一层软件安全包络：工作空间限位、速度上限、急停看门狗（联调时按现场补）。
 
-**完成判据**：`python -m cellctl.main --dashboard --cycles 5` 驱动真臂，
-看板 LIVE 模式实时显示，臂能稳定跑完一行 12 格取放并回 HOME，无碰撞。
+**完成判据**：`python -m cellctl.main --dashboard --config config/fleet.example.yaml` 驱动真臂，
+看板 LIVE 实时显示三品牌并行，各臂稳定跑完取放并回 HOME，无碰撞。
 
 ---
 

@@ -1,0 +1,87 @@
+# 三品牌混合车队 · 部署配置示例
+# 法奥 F5 + 节卡 A5 + UR7 同线运行 —— 每个工位各用一款真机驱动。
+#
+# 说明：
+#   - 架构对上层透明：换品牌只改 robot.driver 与其连接/单位相关字段。
+#   - 各工位仍需在 grid_poses.yaml 里示教自己的位姿表（此处 S1_base 需补齐）。
+#   - 这是真机部署示例，不用于仿真跑通；仿真跑通请用 line.yaml（driver: sim）。
+#   - 位姿约定：位置 mm，姿态 RPY 欧拉角(度)。各家单位换算见 robots/geometry.py：
+#       法奥=mm+度(透传) · 节卡=mm+弧度(度→弧度) · UR=米+旋转矢量(欧拉角→旋转矢量)
+
+line:
+  step_timeout_s: 5.0
+  lock_signal_timeout_s: 10.0
+
+grid:
+  rows: 3
+  cols: 4
+  scan_order: serpentine
+
+stations:
+  # ---- 法奥 Fairino F5：放底层吐司 ----
+  - name: S1_base
+    label: "S1 · 放底层吐司"
+    brand: "法奥 F5"
+    robot:
+      driver: fairino
+      host: 192.168.58.2
+      home: [0.0, -90.0, 90.0, -90.0, -90.0, 0.0]   # 关节角 deg
+      vel_pct: 30                # 法奥速度是百分比(0-100)，非 mm/s
+      blend_mm: 15.0
+      tool: 0
+      user: 0
+      grip_do: 0
+      grip_close_high: true
+    vision:
+      enabled: false             # 吐司由载具定位，免视觉
+    pick_zone: Z_S1_FEED
+    grid_zones: [Z_S1_GRID]
+
+  # ---- 节卡 JAKA A5：放火腿（视觉引导取料）----
+  - name: S3_ham
+    label: "S3 · 放火腿"
+    brand: "节卡 A5"
+    robot:
+      driver: jaka
+      host: 192.168.1.100
+      home: [0.0, -90.0, 90.0, -90.0, -90.0, 0.0]
+      speed_mm_s: 250.0
+      accel_mm_s2: 500.0
+      joint_speed_deg_s: 30
+      blend_mm: 15.0
+      grip_iotype: 0
+      grip_do: 0
+      grip_close_high: true
+    vision:
+      enabled: true
+      camera_index: 0
+      calibration_file: config/calibration/S3_ham.yaml
+      min_score: 0.6
+    pick_zone: Z_S3_FEED
+    grid_zones: [Z_S3_GRID]
+
+  # ---- 优傲 UR7：放顶层吐司 + 轻压 ----
+  - name: S6_top
+    label: "S6 · 放顶层吐司"
+    brand: "UR7"
+    robot:
+      driver: ur
+      host: 192.168.1.10
+      home: [0.0, -90.0, 90.0, -90.0, -90.0, 0.0]
+      speed_mm_s: 250.0
+      accel_mm_s2: 500.0
+      blend_mm: 15.0
+      grip_do: 0                 # UR 控制柜标准数字输出口
+      grip_close_high: true
+    vision:
+      enabled: false
+    pick_zone: Z_S6_FEED
+    grid_zones: [Z_S6_GRID]
+
+zones:
+  - {name: Z_S1_FEED, desc: 吐司缓存塔出料}
+  - {name: Z_S1_GRID, desc: S1 窗口}
+  - {name: Z_S3_FEED, desc: 火腿切片机出料托板}
+  - {name: Z_S3_GRID, desc: S3 窗口}
+  - {name: Z_S6_FEED, desc: 顶层吐司出料}
+  - {name: Z_S6_GRID, desc: S6 窗口}
