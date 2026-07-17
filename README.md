@@ -11,6 +11,11 @@
 代码骨架见 [`cellctl/`](cellctl/)（含仿真驱动，无硬件可跑通：
 `python3 -m cellctl.main --cycles 3`；互锁测试：`python3 tests/test_zone_lock.py`）。
 
+**操作看板**：`python3 -m cellctl.main --dashboard` 后浏览器打开
+`http://127.0.0.1:8700`（`cellctl/dashboard/panel.html` 单独打开为网页内仿真 DEMO）。
+
+**下一步怎么做**：见实施路线图 [`docs/roadmap.md`](docs/roadmap.md)。
+
 ## 核心思路一页速览
 
 1. **用并行补速度**：协作机器人单臂节拍慢（一次取放约 3–5 s），
