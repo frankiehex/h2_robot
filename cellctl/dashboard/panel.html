@@ -243,7 +243,7 @@
         <div class="rowlabels" id="rowlabels"></div>
         <div class="grid" id="grid" style="--cols:4"></div>
         <div class="winmeta">
-          <div class="rowtag act">R1 · 作业行 active</div>
+          <div class="rowtag act">2排×3 · 各臂做远排</div>
           <div class="legend" id="legend"></div>
         </div>
       </div>
@@ -285,7 +285,8 @@
     ["01","WAIT_LOCK"],["02","CAPTURE"],["03","DISPATCH"],
     ["04","EXECUTING"],["05","ADVANCE"]
   ];
-  const GRID = {rows:3, cols:4};
+  const GRID = {rows:2, cols:3};   // 每臂面前 2 排 × 3 = 6；两排在两台对面臂之间共享
+  const SP = 260;                  // 载具间距(世界mm)，DEMO 与 3D 共用（前送一格=SP）
   const STATIONS = [
     {id:"S3_ham", nm:"S3 · 放火腿", br:"节卡 Zu7", color:"var(--ham)",
      feed:"Z_S3_FEED", zgrid:"Z_S3_GRID"},
@@ -321,7 +322,7 @@
     gridEl.style.setProperty("--cols",GRID.cols);
     let h="";
     for(let r=1;r<=GRID.rows;r++) for(let c=1;c<=GRID.cols;c++){
-      const id=`R${r}C${c}`, queued=r>1?"queued":"";
+      const id=`R${r}C${c}`, queued="";   // 两排都作业(各臂做各自远排)，不置灰
       const pips = stations.map((s,i)=>
         `<span class="pip" data-st="${s.id}" style="background:${colorFor(s.id,i)}"></span>`).join("");
       h+=`<div class="cell ${queued}" data-id="${id}"><span class="cid">${id}</span>`
@@ -425,13 +426,15 @@
   // ================= DEMO SIMULATION =================
   // Faithfully steps the cellctl state machine in the browser.
   function makeSim(){
-    const cells = []; for(let c=1;c<=GRID.cols;c++) cells.push(`R1C${c}`); // scan row1
+    // 每台臂做"离自己远的那一排"：−Y 侧臂(i 偶)做远排 R2(+Y)，+Y 侧臂(i 奇)做远排 R1(−Y)
+    const farRow = i => (i%2===0)?2:1;
+    const cellsFor = i => [1,2,3].map(c=>`R${farRow(i)}C${c}`);
     const S = {
       phase:"WAIT_LOCK", cycle:0, cycleTime:0, throughput:0,
-      stations:STATIONS.map(s=>({...s, status:"idle", statusTxt:"IDLE",
-        target:null, vision:{dx:0,dy:0,dth:0}, done:[], atHome:true})),
+      stations:STATIONS.map((s,i)=>({...s, status:"idle", statusTxt:"IDLE",
+        target:null, vision:{dx:0,dy:0,dth:0}, done:[], atHome:true, _row:farRow(i)})),
       zones:ZONES.map(z=>({...z, owner:null})),
-      log:[], active:null, skips:[],
+      log:[], active:null, skips:[], beltShift:0,
       _clock:0, _phaseT:0, _faultReq:false,
       _queues:null, _idx:null, _t0:0
     };
@@ -440,11 +443,11 @@
 
     function setPhase(p){ S.phase=p; S._phaseT=0; }
     function startCycle(){
-      S.stations.forEach(s=>{ s.done=[]; s.atHome=false; s.status="idle"; s.statusTxt="IDLE"; s.target=null; });
-      S.skips=[]; S.active=null; S._t0=S._clock;
+      S.stations.forEach((s,i)=>{ s.done=[]; s.atHome=false; s.status="idle"; s.statusTxt="IDLE"; s.target=null; });
+      S.skips=[]; S.active=null; S._t0=S._clock; S.beltShift=0;
       S._queues={}; S._idx={};
-      S.stations.forEach(s=>{
-        const q=[]; cells.forEach(c=>{ q.push({a:"pick",cell:c}); q.push({a:"place",cell:c}); });
+      S.stations.forEach((s,i)=>{
+        const q=[]; cellsFor(i).forEach(c=>{ q.push({a:"pick",cell:c}); q.push({a:"place",cell:c}); });
         q.push({a:"home"});
         S._queues[s.id]=q; S._idx[s.id]=0;
       });
@@ -461,19 +464,23 @@
           if(S._phaseT>=0.5){ push("[vision] 触发相机 · 逐格定位"); setPhase("DISPATCH"); }
           break;
         case "DISPATCH":
-          if(S._phaseT>=0.4){ push(`本节拍任务: ${S.stations.length*cells.length} 个 (行 R1 · 蛇形)`); startCycle(); setPhase("EXECUTING"); }
+          if(S._phaseT>=0.4){ push(`本节拍任务: ${S.stations.length*3} 个 (各臂做远排 3 个)`); startCycle(); setPhase("EXECUTING"); }
           break;
         case "EXECUTING":
           stepExec(dt); break;
-        case "ADVANCE":
-          if(S._phaseT>=0.5){
+        case "ADVANCE": {
+          // 向前输送：载具沿带右移一格（远排做完 → 前送 → 循环）
+          const T=0.7; S.beltShift = SP * Math.min(1, S._phaseT/T);
+          S.stations.forEach(s=>{ s.status="home"; s.statusTxt="ADVANCE"; s.target=null; });
+          if(S._phaseT>=T){
             S.cycle++; S.cycleTime=+(S._clock-S._t0).toFixed(1);
-            S.throughput=Math.round(GRID.cols*3600/Math.max(S.cycleTime,1));
-            S.zones.forEach(z=>z.owner=null); S.active=null;
-            push(`节拍 #${S.cycle} 完成 · ${S.cycleTime.toFixed(1)}s`);
+            S.throughput=Math.round(GRID.rows*GRID.cols*3600/Math.max(S.cycleTime,1));
+            S.zones.forEach(z=>z.owner=null); S.active=null; S.beltShift=0;
+            push(`节拍 #${S.cycle} 完成 · 前送一格 · ${S.cycleTime.toFixed(1)}s`);
             setPhase("WAIT_LOCK");
           }
           break;
+        }
         case "FAULT": /* wait for reset */ break;
       }
     }
@@ -561,11 +568,11 @@
     const ctx=canvas.getContext("2d");
     const cam={az:0.72, el:0.92}, camT={az:0.72, el:0.92};
     const VIEWS={iso:{az:0.72,el:0.92}, top:{az:0.0,el:1.5}, front:{az:0.0,el:0.32}, side:{az:1.5708,el:0.34}};
-    const SP=260, CS=170, CH=60, LYR=24;
+    const CS=170, CH=60, LYR=24;   // SP 用模块级共享值
     const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
     let W=1,H=1,dpr=1, fit={scale:1,ox:0,oy:0};
     let stations=[], done={}, active=null, faulted={}, effs={}, targets={}, drag=null, nStat=0;
-    let jointsById={}, kinById={}, hasJoints=false, bases=[], flow=0;
+    let jointsById={}, kinById={}, hasJoints=false, bases=[], flow=0, beltShift=0;
 
     // 传送带沿 X；载具 4(沿带) × 3(跨带=3轨道) 居中；机械臂分列两侧对面而立
     const cellWorld=(r,c)=>({x:(c-(GRID.cols+1)/2)*SP, y:(r-(GRID.rows+1)/2)*SP, z:0});
@@ -675,11 +682,17 @@
     }
     function carriers(){
       const list=[];
-      for(let r=1;r<=GRID.rows;r++)for(let c=1;c<=GRID.cols;c++){const w=cellWorld(r,c); list.push({r,c,w,d:raw({x:w.x,y:w.y,z:60}).depth});}
+      for(let r=1;r<=GRID.rows;r++)for(let c=1;c<=GRID.cols;c++){
+        const w=cellWorld(r,c); w.x+=beltShift;      // 前送动画：沿带右移
+        list.push({r,c,w,d:raw({x:w.x,y:w.y,z:60}).depth});
+      }
       list.sort((a,b)=>b.d-a.d);   // 远→近
       for(const {r,c,w} of list){
-        const id=`R${r}C${c}`, dim=r>1, act=active===id;
-        box(w.x,w.y,CH/2, CS,CS,CH, dim?"#212c34":"#2c3b46", {topf:dim?0.85:1.0, halo:act?"rgba(255,176,32,.95)":null});
+        const id=`R${r}C${c}`, act=active===id;
+        // 右移出窗口的载具淡出（示意流出下一站）
+        const outX=(GRID.cols-(GRID.cols+1)/2)*SP + SP*0.6;
+        if(w.x>outX) continue;
+        box(w.x,w.y,CH/2, CS,CS,CH, "#2c3b46", {topf:1.0, halo:act?"rgba(255,176,32,.95)":null});
         (done[id]||[]).forEach((sid,k)=>{const idx=stations.findIndex(s=>s.id===sid);
           box(w.x,w.y, CH+ k*LYR + LYR/2, CS*0.82, CS*0.82, LYR, colorHex(sid,idx), {topf:1.06});});
       }
@@ -731,8 +744,10 @@
     return {
       setView(name){ const v=VIEWS[name]; if(v){ camT.az=v.az; camT.el=v.el; } },
       hasJoints(){ return hasJoints; },
+      invalidate(){ ensureBases(Math.max(nStat,1)); refit(); },
       update(st){
         stations=st.stations;
+        beltShift=st.beltShift||0;
         if(stations.length!==nStat){ nStat=stations.length; ensureBases(nStat); refit(); }
         done={}; stations.forEach(s=>(s.done||[]).forEach(c=>{(done[c]=done[c]||[]).push(s.id);}));
         active=st.active?st.active.cell:null;
@@ -774,9 +789,19 @@
     // 服务端 zones = {zoneId: owner|null}；顺序稳定，描述取已知表
     return Object.keys(owners).map(id=>({id, d:ZDESC[id]||"", owner:owners[id]||null}));
   }
+  function applyGrid(g){
+    // LIVE：采纳服务端网格尺寸，保持 2D/3D 与控制器配置一致
+    if(!g || (g.rows===GRID.rows && g.cols===GRID.cols)) return;
+    GRID.rows=g.rows; GRID.cols=g.cols;
+    buildRowLabels(); _gridSig=null;
+    $("#grid-dims").textContent=`${GRID.rows}排×${GRID.cols}`;
+    if(scene) scene.invalidate();
+  }
   function toRenderState(j){
+    applyGrid(j.grid);
     // normalize a live payload into the render shape
     return {
+      beltShift:0,
       phase:(j.state||"wait_lock").toUpperCase().replace("WAIT_LINE_LOCKED","WAIT_LOCK"),
       cycle:j.cycle||0, cycleTime:j.cycle_time_s||0, throughput:j.throughput_pph||0,
       stations:(j.stations||[]).map(s=>({
@@ -801,7 +826,8 @@
       const st=sim.S;
       render({
         phase:st.phase, cycle:st.cycle, cycleTime:st.cycleTime, throughput:st.throughput,
-        stations:st.stations, zones:st.zones, active:st.active, skips:st.skips, log:st.log
+        stations:st.stations, zones:st.zones, active:st.active, skips:st.skips, log:st.log,
+        beltShift:st.beltShift
       });
     }
   }
@@ -837,7 +863,7 @@
   // ---- boot ----
   buildStepper(); buildRowLabels();          // 网格/图例首帧由 render→ensureGrid 按工位建
   scene = makeScene3D($("#cv3d"));           // 3D 场景（在首帧 render 前建好）
-  $("#grid-dims").textContent = `${GRID.cols}×${GRID.rows}`;   // 4×3（沿带×跨带）
+  $("#grid-dims").textContent = `${GRID.rows}排×${GRID.cols}`;   // 2排×3（每臂面前6个）
   tryLive().then(j=>{
     if(j){ setMode(true); render(toRenderState(j)); }
     else { setMode(false); sim=makeSim(); }
