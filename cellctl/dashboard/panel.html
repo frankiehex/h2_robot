@@ -246,7 +246,7 @@
         <div class="rowlabels" id="rowlabels"></div>
         <div class="grid" id="grid" style="--cols:4"></div>
         <div class="winmeta">
-          <div class="rowtag act">12份 · 逐片抓放 吐司→火腿→吐司→起司→吐司(5层) · 前送3格</div>
+          <div class="rowtag act">四线独立 · 每线3份×5层逐片抓放 · 哪线做完哪线自送3格</div>
           <div class="legend" id="legend"></div>
         </div>
       </div>
@@ -380,7 +380,7 @@
             <span class="vis">
               <span>dx <b>${fmt(v.dx)}</b></span><span>dy <b>${fmt(v.dy)}</b></span><span>dθ <b>${fmt(v.dth)}</b></span>
             </span></div>
-          <div class="r"><span class="k">本节拍完成</span><span class="val">${s.done.length}/6 份</span></div>
+          <div class="r"><span class="k">本线进度</span><span class="val">${s.done.length}/3 份</span></div>
           <div class="r"><span class="k">安全岛 HOME</span>
             <span class="home-ind ${homeCls}"><span class="d"></span>${s.atHome?"在位":"离位"}</span></div>
         </div>
@@ -422,34 +422,46 @@
   const fmt = v => (v==null?"—":(v>=0?"+":"")+v.toFixed(1));
 
   // ================= DEMO SIMULATION =================
-  // 长传送带(每排9格) + 中间3×2作业窗口。两臂协同：火腿臂领做、起司臂跟做(错开一格,不打架)，
-  // 顺序从右上角起 右→左逐排、每排上下两行。做完6个 → 整线前送3格 → 循环。
+  // 四条输送线【各自独立运作,不同步】：A臂管 1/2 线、B臂管 3/4 线。
+  // 臂把当前线窗口 3 格建完(每份5层,每层上去供料线抓一片) → 该线【自己】前送3格，
+  // 同时臂立刻转去做另一条线 —— 没有全线同步的节拍墙。
   function makeSim(){
-    // 每份三明治 5 层(三片吐司夹火腿、起司；酱由泵，略)——每层都要去上方供料线抓一片再放
-    const SEQ = ["bread","ham","bread","cheese","bread"];
-    const armCells = i => { const rows = i===0?[1,2]:[3,4]; const cs=[];   // A 近2行 / B 远2行，各6格
-      for(const c of [6,5,4]) for(const r of rows) cs.push(`R${r}C${c}`); return cs; };
-    const CELLS = [armCells(0), armCells(1)];
+    const SEQ = ["bread","ham","bread","cheese","bread"];   // 三片吐司夹火腿/起司(酱由泵,略)
+    const LANES = [[1,2],[3,4]];                            // 每臂管的两条线
+    const laneCells = r => [6,5,4].map(c=>`R${r}C${c}`);    // 该线窗口3格,从右往左
+    const LANE_T = 2.2;                                     // 单线前送3格的滑移时长(仿真秒)
     const S = {
       phase:"WAIT_LOCK", cycle:0, cycleTime:0, throughput:0,
       stations:STATIONS.map(s=>({...s, status:"idle", statusTxt:"待命", motion:null,
         target:null, vision:{dx:0,dy:0,dth:0}, done:[], atHome:true})),
       zones:ZONES.map(z=>({...z, owner:null})),
-      log:[], active:[], skips:[], beltShift:0, cell:{},
-      _clock:0, _phaseT:0, _faultReq:false, _t0:0,
-      _cell:[0,0], _layer:[0,0], _sub:["pick","pick"], _t:[0,0]
+      log:[], active:[], skips:[], laneShift:{1:0,2:0,3:0,4:0}, cell:{},
+      _clock:0, _phaseT:0, _faultReq:false, _lastAdv:0, _out:0, _t0:0,
+      _adv:{},                                              // 正在前送的线 {row: 已进行时长}
+      // B 臂错峰启动(wait0)：加上动作时长抖动，四条线自然错开、各走各的
+      _arm:[{lane:1,cell:0,layer:0,sub:"pick",t:0,need:1.4,wait0:0},
+            {lane:3,cell:0,layer:0,sub:"pick",t:0,need:1.4,wait0:3.5}]
     };
-    // 传送带初始：右3格(已完成)=整份三明治(5层)；作业窗口(中3)与左3=空(待逐片搭建)
+    // 初始：右3格=整份三明治(流出区)；其余空
     for(let r=1;r<=GRID.rows;r++)for(let c=1;c<=GRID.cols;c++)
       S.cell[`R${r}C${c}`] = c>=7 ? SEQ.slice() : [];
-    const zoneOf = id => S.zones.find(z=>z.id===id);
     const push = (msg,fault)=>{ S.log.unshift({t:S._clock.toFixed(1)+"s", msg, fault}); if(S.log.length>30)S.log.pop(); };
     const setPhase = p => { S.phase=p; S._phaseT=0; };
 
-    function startCycle(){
-      S._cell=[0,0]; S._layer=[0,0]; S._sub=["pick","pick"]; S._t=[0,0];
-      S._t0=S._clock; S.beltShift=0; S.active=[];
-      S.stations.forEach(s=>{ s.done=[]; s.atHome=false; s.status="idle"; s.statusTxt="待命"; s.target=null; s.motion=null; });
+    function startLaneAdvance(r){ S._adv[r]=0; push(`[线${r}] 3 份完成 · 单线前送`); }
+    function tickAdvances(dt){
+      for(const r of Object.keys(S._adv)){
+        S._adv[r]+=dt; S.laneShift[r]=3*SP*Math.min(1,S._adv[r]/LANE_T);
+        if(S._adv[r]>=LANE_T){
+          for(let c=GRID.cols;c>=1;c--){ const src=c-3;
+            S.cell[`R${r}C${c}`] = src>=1 ? S.cell[`R${r}C${src}`] : []; }
+          S.laneShift[r]=0; delete S._adv[r];
+          S.cycle++; S._out+=3;
+          S.cycleTime=+(S._clock-S._lastAdv).toFixed(1); S._lastAdv=S._clock;
+          S.throughput=Math.round(S._out*3600/Math.max(S._clock-S._t0,1));
+          push(`[线${r}] 前送完成 · 流出 3 份 (累计 ${S._out})`);
+        }
+      }
     }
 
     function tick(dt){
@@ -457,66 +469,55 @@
       switch(S.phase){
         case "WAIT_LOCK": if(S._phaseT>=1.0){ push("[line] 到位锁定"); setPhase("CAPTURE"); } break;
         case "CAPTURE":   if(S._phaseT>=0.8){ push("[vision] 触发相机 · 逐格定位"); setPhase("DISPATCH"); } break;
-        case "DISPATCH":  if(S._phaseT>=0.6){ push("本节拍: 12 份 · 两臂各建 6 份(每层逐片抓放)"); startCycle(); setPhase("EXECUTING"); } break;
-        case "EXECUTING": stepExec(dt); break;
-        case "ADVANCE": {
-          const T=2.2; S.beltShift = 3*SP * Math.min(1, S._phaseT/T);   // 前送 3 格(可见的滑移)
-          S.stations.forEach(s=>{ s.status="home"; s.statusTxt="ADVANCE"; s.target=null; s.motion=null; });
-          if(S._phaseT>=T){
-            const nc={};
-            for(let r=1;r<=GRID.rows;r++)for(let c=1;c<=GRID.cols;c++){
-              const src=c-3; nc[`R${r}C${c}`] = src>=1 ? (S.cell[`R${r}C${src}`]||[]) : [];
-            }
-            S.cell=nc;    // 进入窗口的是空载具，由机械臂逐片搭建(含吐司底)
-            S.beltShift=0; S.active=[];
-            S.cycle++; S.cycleTime=+(S._clock-S._t0).toFixed(1);
-            S.throughput=Math.round(12*3600/Math.max(S.cycleTime,1));
-            push(`节拍 #${S.cycle} · 前送三格 · ${S.cycleTime.toFixed(1)}s`);
-            setPhase("WAIT_LOCK");
-          }
-          break;
-        }
-        case "FAULT": break;
+        case "DISPATCH":  if(S._phaseT>=0.6){ push("连续运行: 四线独立 · 各线做完自送3格");
+          S._t0=S._clock; S._lastAdv=S._clock; setPhase("EXECUTING"); } break;
+        case "EXECUTING": tickAdvances(dt); stepExec(dt); break;
+        case "FAULT": tickAdvances(dt); break;   // 已在途的线走完,臂停
       }
     }
 
-    const ACT_T = 1.4;    // 每个子动作(上去接料/到位/铲子滑放)时长(仿真秒)——
-                          // 默认速度下≈0.5s真实时间,确保"上去拿一片"的行程肉眼可见
+    const ACT_T = 1.4;    // 每个子动作(上去接料/到位/铲子滑放)基准时长(仿真秒)
+    const nextNeed = () => ACT_T*(0.75+0.5*Math.random());  // 抖动:各线节奏自然错开
     const LBL = {bread:"吐司", ham:"火腿", cheese:"起司"};
-    // 每层 3 子动作：pick(上去对应供料线接一片) → approach(到载具上方) → slide(铲子往前滑放)
-    // 每份三明治 5 层逐片搭建；一次只拿一片放一片
+    // 每层 3 子动作：pick(上去供料线接一片) → approach(到载具上方) → slide(铲子前滑放下)
     function buildArm(dt, A, k){
-      const cells=CELLS[k];
-      if(S._cell[k] >= cells.length){ A.status="home"; A.statusTxt="HOME"; A.motion=null; A.target=null; A.atHome=true; return true; }
-      const id=cells[S._cell[k]], item=SEQ[S._layer[k]]; A.item=item;
-      if(S._sub[k]==="pick"){ A.status="picking"; A.statusTxt="取"+LBL[item]; A.motion="pick"; A.target=id;
-        S._t[k]+=dt; if(S._t[k]>=ACT_T){ S._sub[k]="approach"; S._t[k]=0; } }
-      else if(S._sub[k]==="approach"){ A.status="placing"; A.statusTxt="到位"; A.motion="approach"; A.target=id;
-        S._t[k]+=dt; if(S._t[k]>=ACT_T){ S._sub[k]="slide"; S._t[k]=0; } }
+      const L=S._arm[k];
+      if(L.wait0>0){ L.wait0-=dt; A.status="idle"; A.statusTxt="错峰启动中"; A.motion=null; A.target=null; return; }
+      if(S._adv[L.lane]!==undefined){                       // 当前线在前送 → 试着换另一条线
+        const other=LANES[k].find(r=>r!==L.lane);
+        if(S._adv[other]===undefined){ L.lane=other; L.cell=0; L.layer=0; L.sub="pick"; L.t=0; }
+        else { A.status="idle"; A.statusTxt="等待载具"; A.motion=null; A.target=null; return; }
+      }
+      const cells=laneCells(L.lane), id=cells[L.cell], item=SEQ[L.layer]; A.item=item;
+      if(L.sub==="pick"){ A.status="picking"; A.statusTxt=`线${L.lane}·取${LBL[item]}`; A.motion="pick"; A.target=id;
+        L.t+=dt; if(L.t>=L.need){ L.sub="approach"; L.t=0; L.need=nextNeed(); } }
+      else if(L.sub==="approach"){ A.status="placing"; A.statusTxt="到位"; A.motion="approach"; A.target=id;
+        L.t+=dt; if(L.t>=L.need){ L.sub="slide"; L.t=0; L.need=nextNeed(); } }
       else { A.status="placing"; A.statusTxt="铲入·滑放"; A.motion="slide"; A.target=id;
-        S._t[k]+=dt; if(S._t[k]>=ACT_T){ S.cell[id].push(item);
-          push(`[${LBL[item]}] 接料→滑放 ${id} · 第${S._layer[k]+1}/${SEQ.length}层`);
-          S._layer[k]++; S._sub[k]="pick"; S._t[k]=0;
-          if(S._layer[k]>=SEQ.length){ S._layer[k]=0; S._cell[k]++; } } }
-      return false;
+        L.t+=dt; if(L.t>=L.need){ L.need=nextNeed(); S.cell[id].push(item);
+          push(`[${LBL[item]}] 线${L.lane} ${id} · 第${L.layer+1}/${SEQ.length}层`);
+          L.layer++; L.sub="pick"; L.t=0;
+          if(L.layer>=SEQ.length){ L.layer=0; L.cell++;
+            if(L.cell>=cells.length){                        // 该线3格建完 → 单线前送,换线
+              if(S._faultReq && k===1){ A.status="fault"; A.statusTxt="FAULT"; A.atHome=false;
+                push(`[线${L.lane}] B 臂故障 — 该线暂停`, true); setPhase("FAULT"); return; }
+              startLaneAdvance(L.lane);
+              const other=LANES[k].find(r=>r!==L.lane);
+              L.lane=other; L.cell=0; L.layer=0; L.sub="pick"; L.t=0;
+            } } } }
+      A.done=laneCells(L.lane).slice(0,L.cell);
     }
     function stepExec(dt){
-      const A=S.stations[0], B=S.stations[1];   // 两臂各建 6 份，互不打架(不同格)
-      const aDone=buildArm(dt,A,0), bDone=buildArm(dt,B,1);
-      A.done=CELLS[0].slice(0,S._cell[0]); B.done=CELLS[1].slice(0,S._cell[1]);
+      const A=S.stations[0], B=S.stations[1];
+      buildArm(dt,A,0); buildArm(dt,B,1);
       S.active=[A.status==="placing"?A.target:null, B.status==="placing"?B.target:null].filter(Boolean);
-      if(aDone && bDone){   // 两臂都建完 = 全部完成
-        if(S._faultReq){ B.status="fault"; B.statusTxt="FAULT"; B.atHome=false;
-          push("步进前 B 臂未回 HOME — 禁止前送", true); setPhase("FAULT"); }
-        else { push("[line] 12 份完成 · 允许前送"); setPhase("ADVANCE"); }
-      }
     }
 
-    function injectFault(){ S._faultReq=true; push("⚠ 已请求注入故障（下次禁止前送）"); }
+    function injectFault(){ S._faultReq=true; push("⚠ 已请求注入故障（B臂下次完线时故障）"); }
     function reset(){
       S._faultReq=false;
       S.stations.forEach(s=>{ s.status="idle"; s.statusTxt="待命"; s.atHome=true; s.target=null; });
-      if(S.phase==="FAULT"){ push("故障已复位 · 恢复运行"); setPhase("WAIT_LOCK"); }
+      if(S.phase==="FAULT"){ push("故障已复位 · 恢复运行"); setPhase("EXECUTING"); }
     }
     // 传给渲染：cell → 颜色数组
     S.cellColors = () => { const m={}; for(const id in S.cell) m[id]=S.cell[id].map(k=>ITEMCOLOR[k]); return m; };
@@ -543,7 +544,7 @@
     const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
     let W=1,H=1,dpr=1, fit={scale:1,ox:0,oy:0};
     let stations=[], cellItems={}, activeSet=new Set(), faulted={}, effs={}, targets={}, drag=null, nStat=0;
-    let jointsById={}, kinById={}, hasJoints=false, bases=[], flow=0, beltShift=0;
+    let jointsById={}, kinById={}, hasJoints=false, bases=[], flow=0, laneShift={};
 
     // 传送带沿 X；载具 4(沿带) × 3(跨带=3轨道) 居中；机械臂分列两侧对面而立
     const cellWorld=(r,c)=>({x:(c-(GRID.cols+1)/2)*SP, y:(r-(GRID.rows+1)/2)*SP, z:0});
@@ -661,7 +662,7 @@
     function carriers(){
       const list=[];
       for(let r=1;r<=GRID.rows;r++)for(let c=1;c<=GRID.cols;c++){
-        const w=cellWorld(r,c); w.x+=beltShift;      // 前送动画：沿带右移
+        const w=cellWorld(r,c); w.x+=(laneShift[r]||0);   // 各线独立前送：按行滑移
         list.push({r,c,w,d:raw({x:w.x,y:w.y,z:60}).depth});
       }
       list.sort((a,b)=>b.d-a.d);   // 远→近
@@ -740,7 +741,7 @@
       invalidate(){ ensureBases(Math.max(nStat,1)); refit(); },
       update(st){
         stations=st.stations;
-        beltShift=st.beltShift||0;
+        laneShift=st.laneShift||{};
         cellItems=st.cellItems||{};
         if(stations.length!==nStat){ nStat=stations.length; ensureBases(nStat); refit(); }
         activeSet = new Set(Array.isArray(st.active) ? st.active : (st.active ? [st.active.cell] : []));
@@ -800,7 +801,7 @@
     const cellItems={}; const stns=j.stations||[];
     stns.forEach((s,i)=> (s.done||[]).forEach(c=>{ (cellItems[c]=cellItems[c]||[]).push(colorFor(s.name,i)); }));
     return {
-      beltShift:0, cellItems,
+      laneShift:{}, cellItems,
       phase:(j.state||"wait_lock").toUpperCase().replace("WAIT_LINE_LOCKED","WAIT_LOCK"),
       cycle:j.cycle||0, cycleTime:j.cycle_time_s||0, throughput:j.throughput_pph||0,
       stations:(j.stations||[]).map(s=>({
@@ -826,7 +827,7 @@
       render({
         phase:st.phase, cycle:st.cycle, cycleTime:st.cycleTime, throughput:st.throughput,
         stations:st.stations, zones:st.zones, active:st.active, log:st.log,
-        beltShift:st.beltShift, cellItems:st.cellColors()
+        laneShift:st.laneShift, cellItems:st.cellColors()
       });
     }
   }
