@@ -533,8 +533,8 @@
   }
   function makeScene3D(canvas){
     const ctx=canvas.getContext("2d");
-    const cam={az:0.72, el:0.92}, camT={az:0.72, el:0.92};
-    const VIEWS={iso:{az:0.72,el:0.92}, top:{az:0.0,el:1.5}, front:{az:0.0,el:0.32}, side:{az:1.5708,el:0.34}};
+    const cam={az:0.72, el:0.8}, camT={az:0.72, el:0.8};   // el 略低，突出高度(供料线在上方)
+    const VIEWS={iso:{az:0.72,el:0.8}, top:{az:0.0,el:1.5}, front:{az:0.0,el:0.30}, side:{az:1.5708,el:0.32}};
     const CS=170, CH=60, LYR=24;   // SP 用模块级共享值
     const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
     let W=1,H=1,dpr=1, fit={scale:1,ox:0,oy:0};
@@ -691,17 +691,20 @@
       });
     }
     function feedLine(y,z,color,label){
-      // 传送带上方的供料带 + 流动切片 + 文字标签
+      // 架在传送带【上方】的供料带：立柱(地面→高处) + 供料带 + 流动切片 + 标签
       const x0=feedX0(), x1=feedX1(), span=x1-x0;
-      box((x0+x1)/2, y, z-8, span, CS*0.7, 12, "#22333d",{topf:1.05});
-      for(let k=0;k<4;k++){ const x=x0 + ((k*span/4 + flow*0.6)%span); box(x,y,z+8, CS*0.5,CS*0.5,12,color,{topf:1.12}); }
-      const s=P({x:(x0+x1)/2,y,z:z+70}); ctx.fillStyle="rgba(220,228,234,.85)";
+      box(x0, y, z/2, 16,16,z, "#3a464f",{topf:1.0});   // 左立柱(从地面竖起)
+      box(x1, y, z/2, 16,16,z, "#3a464f",{topf:1.0});   // 右立柱
+      box((x0+x1)/2, y, z, span, CS*0.7, 14, "#22333d",{topf:1.05});   // 供料带(架顶)
+      for(let k=0;k<4;k++){ const x=x0 + ((k*span/4 + flow*0.6)%span); box(x,y,z+14, CS*0.5,CS*0.5,12,color,{topf:1.12}); }
+      const s=P({x:(x0+x1)/2,y,z:z+80}); ctx.fillStyle="rgba(220,228,234,.9)";
       ctx.font="600 11px ui-monospace,monospace"; ctx.textAlign="center"; ctx.fillText(label,s.x,s.y);
     }
     function feeds(){
-      feedLine(FEED.bread.y,  FEED.bread.z,  ITEMCOLOR.bread,  "吐司供料(上方)");
-      feedLine(FEED.ham.y,    FEED.ham.z,    ITEMCOLOR.ham,    "火腿供料");
-      feedLine(FEED.cheese.y, FEED.cheese.z, ITEMCOLOR.cheese, "起司供料");
+      // 三条供料线都架在传送带上方(不同高度,便于分辨)
+      feedLine(FEED.ham.y,    FEED.ham.z,    ITEMCOLOR.ham,    "火腿供料(上方)");
+      feedLine(FEED.cheese.y, FEED.cheese.z, ITEMCOLOR.cheese, "起司供料(上方)");
+      feedLine(FEED.bread.y,  FEED.bread.z,  ITEMCOLOR.bread,  "吐司供料(上方·上游)");
     }
     function draw(){ ctx.clearRect(0,0,W,H); conveyor(); feeds(); carriers(); arms(); }
     function frame(){
