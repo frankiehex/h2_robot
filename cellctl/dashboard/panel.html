@@ -429,7 +429,7 @@
     const order=[]; for(const c of [6,5,4]) for(let r=1;r<=GRID.rows;r++) order.push(`R${r}C${c}`);
     const S = {
       phase:"WAIT_LOCK", cycle:0, cycleTime:0, throughput:0,
-      stations:STATIONS.map(s=>({...s, status:"idle", statusTxt:"待命",
+      stations:STATIONS.map(s=>({...s, status:"idle", statusTxt:"待命", motion:null,
         target:null, vision:{dx:0,dy:0,dth:0}, done:[], atHome:true})),
       zones:ZONES.map(z=>({...z, owner:null})),
       log:[], active:[], skips:[], beltShift:0, cell:{},
@@ -458,7 +458,7 @@
         case "EXECUTING": stepExec(dt); break;
         case "ADVANCE": {
           const T=0.95; S.beltShift = 3*SP * Math.min(1, S._phaseT/T);   // 前送 3 格
-          S.stations.forEach(s=>{ s.status="home"; s.statusTxt="ADVANCE"; s.target=null; });
+          S.stations.forEach(s=>{ s.status="home"; s.statusTxt="ADVANCE"; s.target=null; s.motion=null; });
           if(S._phaseT>=T){
             const nc={};
             for(let r=1;r<=GRID.rows;r++)for(let c=1;c<=GRID.cols;c++){
@@ -480,28 +480,25 @@
       }
     }
 
-    const ACT_T = 0.45;
-    // 每格 = 先到供料线取片(pick) → 再放到载具(place)，材料有来源
+    const ACT_T = 0.3;   // 每个子动作(接料/到位/滑放)时长(秒)
+    // 每格 3 子动作：pick(上去供料线接一片) → approach(移到载具上方) → slide(铲子往前滑放)
+    // 一次只拿一片、放一片，模拟铲子接料+滑放的姿态
+    function armCell(dt, A, idxKey, subKey, tKey, item, leadGate){
+      if(S[idxKey] >= order.length){ A.status="home"; A.statusTxt="HOME"; A.motion=null; A.target=null; A.atHome=true; return; }
+      if(leadGate!==undefined && S[idxKey] >= leadGate){ A.status="idle"; A.statusTxt="跟随中"; A.motion=null; A.target=null; return; }
+      const id=order[S[idxKey]], lbl=item==="ham"?"火腿":"起司";
+      if(S[subKey]==="pick"){ A.status="picking"; A.statusTxt="取"+lbl; A.motion="pick"; A.target=id;
+        S[tKey]+=dt; if(S[tKey]>=ACT_T){ S[subKey]="approach"; S[tKey]=0; } }
+      else if(S[subKey]==="approach"){ A.status="placing"; A.statusTxt="到位"; A.motion="approach"; A.target=id;
+        S[tKey]+=dt; if(S[tKey]>=ACT_T){ S[subKey]="slide"; S[tKey]=0; } }
+      else { A.status="placing"; A.statusTxt="铲入·滑放"; A.motion="slide"; A.target=id;
+        S[tKey]+=dt; if(S[tKey]>=ACT_T){ if(!S.cell[id].includes(item)) S.cell[id].push(item);
+          push(`[${lbl}] 接料→滑放 ${id}`); S[idxKey]++; S[subKey]="pick"; S[tKey]=0; } }
+    }
     function stepExec(dt){
       const A=S.stations[0], B=S.stations[1];   // A=火腿(领)，B=起司(跟)
-      // 火腿臂 A：取火腿 → 放
-      if(S._aCell<order.length){
-        if(S._aSub==="pick"){ A.status="picking"; A.statusTxt="取火腿"; A.target="FEED";
-          S._at+=dt; if(S._at>=ACT_T){ S._aSub="place"; S._at=0; } }
-        else { A.status="placing"; A.statusTxt="放火腿"; A.target=order[S._aCell];
-          A.vision={dx:rand(-6,6),dy:rand(-6,6),dth:rand(-8,8)};
-          S._at+=dt; if(S._at>=ACT_T){ const id=order[S._aCell]; if(!S.cell[id].includes("ham")) S.cell[id].push("ham");
-            push(`[火腿] 取料→放 ${id}`); S._aCell++; S._aSub="pick"; S._at=0; } }
-      } else { A.status="home"; A.statusTxt="HOME"; A.target=null; A.atHome=true; }
-      // 起司臂 B：跟做火腿臂已放过火腿的格(错开,不打架)
-      if(S._bCell<S._aCell && S._bCell<order.length){
-        if(S._bSub==="pick"){ B.status="picking"; B.statusTxt="取起司"; B.target="FEED";
-          S._bt+=dt; if(S._bt>=ACT_T){ S._bSub="place"; S._bt=0; } }
-        else { B.status="placing"; B.statusTxt="放起司"; B.target=order[S._bCell];
-          S._bt+=dt; if(S._bt>=ACT_T){ const id=order[S._bCell]; if(!S.cell[id].includes("cheese")) S.cell[id].push("cheese");
-            push(`[起司] 取料→放 ${id}`); S._bCell++; S._bSub="pick"; S._bt=0; } }
-      } else if(S._bCell>=order.length){ B.status="home"; B.statusTxt="HOME"; B.target=null; B.atHome=true; }
-      else { B.status="idle"; B.statusTxt="跟随中"; B.target=null; }
+      armCell(dt, A, "_aCell","_aSub","_at", "ham");                 // 火腿臂领做
+      armCell(dt, B, "_bCell","_bSub","_bt", "cheese", S._aCell);    // 起司臂只做A已放过的格
       A.done=order.slice(0,S._aCell); B.done=order.slice(0,S._bCell);
       S.active=[A.status==="placing"?A.target:null, B.status==="placing"?B.target:null].filter(Boolean);
       if(S._bCell>=order.length){   // 起司做完 = 全部完成
@@ -559,9 +556,10 @@
       });
     }
     const baseWorld=i=> bases[i] || {x:0,y:-(1.55*SP+140),z:0,yaw:90,side:-1};
-    // 供料线：火腿在 A(−Y)臂后方、起司在 B(+Y)臂后方、吐司在上游(左端外侧)
-    const feedPos=i=>{ const b=baseWorld(i); return {x:b.x, y:b.y + Math.sign(b.y||-1)*320, z:0}; };
-    const breadFeedPos=()=>({x:(1-(GRID.cols+1)/2)*SP - SP*1.5, y:0, z:0});
+    // 供料线在传送带正上方(共享)：机械臂就近上去接一片，省行走。x 随取料格。
+    const FEED = { bread:{y:0,z:460}, ham:{y:-120,z:380}, cheese:{y:120,z:380} };
+    const feedX0=()=>(Math.min(...ACTIVE_COLS)-(GRID.cols+1)/2)*SP - SP*0.6;
+    const feedX1=()=>(Math.max(...ACTIVE_COLS)-(GRID.cols+1)/2)*SP + SP*0.6;
 
     function raw(p){
       const ca=Math.cos(cam.az), sa=Math.sin(cam.az);
@@ -576,9 +574,8 @@
       const pts=[];
       const bx0=(1-(GRID.cols+1)/2)*SP-SP*0.9, bx1=(GRID.cols-(GRID.cols+1)/2)*SP+SP*0.9, yh=GRID.rows/2*SP+SP*0.45;
       pts.push({x:bx0,y:-yh,z:0},{x:bx1,y:yh,z:0},{x:bx0,y:yh,z:0},{x:bx1,y:-yh,z:0});
-      for(let i=0;i<n;i++){const b=baseWorld(i); pts.push({x:b.x,y:b.y,z:640},{x:b.x,y:b.y,z:0});
-        const f=feedPos(i); pts.push({x:f.x,y:f.y,z:0});}       // 含供料线
-      { const bf=breadFeedPos(); pts.push({x:bf.x,y:bf.y-SP,z:0},{x:bf.x,y:bf.y+SP,z:0}); }
+      for(let i=0;i<n;i++){const b=baseWorld(i); pts.push({x:b.x,y:b.y,z:640},{x:b.x,y:b.y,z:0});}
+      for(const k in FEED){ const f=FEED[k]; pts.push({x:feedX0(),y:f.y,z:f.z},{x:feedX1(),y:f.y,z:f.z}); }  // 上方供料线
       let mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9;
       for(const p of pts){const r=raw(p); const sx=r.rx, sy=-r.ry;
         mnx=Math.min(mnx,sx);mxx=Math.max(mxx,sx);mny=Math.min(mny,sy);mxy=Math.max(mxy,sy);}
@@ -676,42 +673,35 @@
         const b=baseWorld(i);
         const col=faulted[s.id]?"#FF5257":colorHex(s.id,i);
         box(b.x,b.y,60,150,150,120,"#39454f",{topf:1.15});   // 底座
+        let tip;
         const j=jointsById[s.id];
-        if(j && j.length>=6){
-          // 有真机关节角 → 正向运动学还原六轴姿态
+        if(j && j.length>=6){                                // 真机关节角 → FK
           const f=fk(b,j,kinById[s.id]);
           seg(f.S,f.E,col,15); seg(f.E,f.W,col,13); seg(f.W,f.T,col,11);
-          dot(f.S,col,9); dot(f.E,col,8); dot(f.W,col,7);
-          box(f.T.x,f.T.y,f.T.z,60,60,48,col,{topf:1.2});
-        } else {
-          // 无关节角 → 两连杆缓动估计（DEMO / 未读到关节角时）
+          dot(f.S,col,9); dot(f.E,col,8); dot(f.W,col,7); tip=f.T;
+        } else {                                             // 两连杆缓动估计
           const e=effs[s.id]; if(!e) return;
           const sh={x:b.x,y:b.y,z:250}, el={x:(sh.x+e.x)/2,y:(sh.y+e.y)/2,z:Math.max(sh.z,e.z)+180};
-          seg(sh,el,col,15); seg(el,e,col,13);
-          dot(sh,col,9); dot(el,col,8);
-          box(e.x,e.y,e.z,66,66,52,col,{topf:1.2});
+          seg(sh,el,col,15); seg(el,e,col,13); dot(sh,col,9); dot(el,col,8); tip=e;
         }
+        // 末端 = 铲子(扁平) + 运送中的切片(接到料后到放下前)
+        box(tip.x,tip.y,tip.z, 100,58,12, "#93a0aa", {topf:1.15});
+        if(s.motion==="approach" || s.motion==="slide")
+          box(tip.x,tip.y,tip.z+13, 68,44,12, ITEMCOLOR[s.item]||col, {topf:1.15});
       });
     }
-    function feedLine(p, color, label, along){
-      // 供料线：短带 + 3 片切片(流动) + 文字标签
-      const L=SP*1.5, w=CS*0.75;
-      if(along==="x") box(p.x,p.y,-8, L, w, 18, "#22333d",{topf:1.05});
-      else            box(p.x,p.y,-8, w, L, 18, "#22333d",{topf:1.05});
-      for(let k=-1;k<=1;k++){
-        const off=(k*SP*0.45)+((flow/SP-0.5)*SP*0.3);   // 切片随带轻微流动
-        const cx = along==="x" ? p.x+off : p.x;
-        const cy = along==="x" ? p.y : p.y+off;
-        box(cx,cy,20, CS*0.5, CS*0.5, 15, color,{topf:1.12});
-      }
-      const s=P({x:p.x, y:p.y, z:150});
-      ctx.fillStyle="rgba(220,228,234,.8)"; ctx.font="600 11px ui-monospace,monospace";
-      ctx.textAlign="center"; ctx.fillText(label, s.x, s.y);
+    function feedLine(y,z,color,label){
+      // 传送带上方的供料带 + 流动切片 + 文字标签
+      const x0=feedX0(), x1=feedX1(), span=x1-x0;
+      box((x0+x1)/2, y, z-8, span, CS*0.7, 12, "#22333d",{topf:1.05});
+      for(let k=0;k<4;k++){ const x=x0 + ((k*span/4 + flow*0.6)%span); box(x,y,z+8, CS*0.5,CS*0.5,12,color,{topf:1.12}); }
+      const s=P({x:(x0+x1)/2,y,z:z+70}); ctx.fillStyle="rgba(220,228,234,.85)";
+      ctx.font="600 11px ui-monospace,monospace"; ctx.textAlign="center"; ctx.fillText(label,s.x,s.y);
     }
     function feeds(){
-      feedLine(feedPos(0), ITEMCOLOR.ham,    "火腿供料", "x");   // A 臂后方
-      feedLine(feedPos(1), ITEMCOLOR.cheese, "起司供料", "x");   // B 臂后方
-      feedLine(breadFeedPos(), ITEMCOLOR.bread, "吐司供料(上游)", "y");
+      feedLine(FEED.bread.y,  FEED.bread.z,  ITEMCOLOR.bread,  "吐司供料(上方)");
+      feedLine(FEED.ham.y,    FEED.ham.z,    ITEMCOLOR.ham,    "火腿供料");
+      feedLine(FEED.cheese.y, FEED.cheese.z, ITEMCOLOR.cheese, "起司供料");
     }
     function draw(){ ctx.clearRect(0,0,W,H); conveyor(); feeds(); carriers(); arms(); }
     function frame(){
@@ -750,10 +740,14 @@
         stations.forEach(s=>{ if(s.joints && s.joints.length>=6){ jointsById[s.id]=s.joints; kinById[s.id]=s.kin; hasJoints=true; } });
         stations.forEach((s,i)=>{
           const b=baseWorld(i); let t;
-          const cell=(s.target||"").match(/R(\d)C(\d)/);
-          if(s.status==="picking"){const f=feedPos(i); t={x:f.x,y:f.y,z:180};}   // 去供料线取片
-          else if(s.status==="placing" && cell){const w=cellWorld(+cell[1],+cell[2]); t={x:w.x,y:w.y,z:160};}
-          else {t={x:b.x, y:b.y - (b.side||-1)*160, z:560};} // home / idle：抬起、微朝传送带
+          const m=(s.target||"").match(/R(\d)C(\d)/);
+          if(m){
+            const w=cellWorld(+m[1],+m[2]); const fd=FEED[s.item]||FEED.ham;
+            if(s.motion==="pick")          t={x:w.x, y:fd.y, z:fd.z};        // 上去接一片(就近)
+            else if(s.motion==="approach") t={x:w.x, y:w.y, z:250};          // 移到载具上方
+            else if(s.motion==="slide")    t={x:w.x+SP*0.34, y:w.y, z:150};  // 铲子往前滑放
+            else                           t={x:w.x, y:w.y, z:170};
+          } else { t={x:b.x, y:b.y-(b.side||-1)*160, z:560}; }               // home/idle：抬起
           targets[s.id]=t;
           if(!effs[s.id]) effs[s.id]={x:t.x,y:t.y,z:t.z};
         });
