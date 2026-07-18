@@ -246,7 +246,7 @@
         <div class="rowlabels" id="rowlabels"></div>
         <div class="grid" id="grid" style="--cols:4"></div>
         <div class="winmeta">
-          <div class="rowtag act">窗口3格×2行 · 火腿领·起司跟 · 做完前送3格</div>
+          <div class="rowtag act">中间窗口3格×4行=12 · 火腿领·起司跟 · 做完前送3格</div>
           <div class="legend" id="legend"></div>
         </div>
       </div>
@@ -289,9 +289,10 @@
     ["04","EXECUTING"],["05","ADVANCE"]
   ];
   // 传送带每排显示 9 格：左3=空(来料)｜中3=作业窗口｜右3=已完成(流出)。
-  // 作业窗口 = 中间 3 排 × 2 行 = 6，两台对面臂共同填充(一放火腿一放起司,互不打架)。
-  const GRID = {rows:2, cols:9};
-  const ACTIVE_COLS = [4,5,6];     // 中间 3 格 = 作业窗口
+  // 两台对面臂之间的中间窗口 = 3 格(沿带) × 4 行 = 12，两臂协同填充
+  // (火腿臂领做、起司臂跟做,错开不打架;每格叠火腿+起司)。
+  const GRID = {rows:4, cols:9};
+  const ACTIVE_COLS = [4,5,6];     // 中间 3 格 × 4 行 = 12 = 作业窗口
   const SP = 260;                  // 载具间距(世界mm)，DEMO 与 3D 共用（前送一格=SP）
   const ITEMCOLOR = {ham:"#FF7A5C", cheese:"#F4C430"};  // 火腿 / 起司
   const STATIONS = [
@@ -378,7 +379,7 @@
             <span class="vis">
               <span>dx <b>${fmt(v.dx)}</b></span><span>dy <b>${fmt(v.dy)}</b></span><span>dθ <b>${fmt(v.dth)}</b></span>
             </span></div>
-          <div class="r"><span class="k">本节拍完成</span><span class="val">${s.done.length}/6</span></div>
+          <div class="r"><span class="k">本节拍完成</span><span class="val">${s.done.length}/12</span></div>
           <div class="r"><span class="k">安全岛 HOME</span>
             <span class="home-ind ${homeCls}"><span class="d"></span>${s.atHome?"在位":"离位"}</span></div>
         </div>
@@ -423,8 +424,8 @@
   // 长传送带(每排9格) + 中间3×2作业窗口。两臂协同：火腿臂领做、起司臂跟做(错开一格,不打架)，
   // 顺序从右上角起 右→左逐排、每排上下两行。做完6个 → 整线前送3格 → 循环。
   function makeSim(){
-    // 作业顺序：右→左逐排(6,5,4)，每排先上行后下行 —— 从右上角开始
-    const order=[]; for(const c of [6,5,4]) for(const r of [1,2]) order.push(`R${r}C${c}`);
+    // 作业顺序：右→左逐排(6,5,4)，每排从上到下 4 行 —— 从右上角开始，共 12 格
+    const order=[]; for(const c of [6,5,4]) for(let r=1;r<=GRID.rows;r++) order.push(`R${r}C${c}`);
     const S = {
       phase:"WAIT_LOCK", cycle:0, cycleTime:0, throughput:0,
       stations:STATIONS.map(s=>({...s, status:"idle", statusTxt:"待命",
@@ -450,7 +451,7 @@
       switch(S.phase){
         case "WAIT_LOCK": if(S._phaseT>=0.6){ push("[line] 到位锁定"); setPhase("CAPTURE"); } break;
         case "CAPTURE":   if(S._phaseT>=0.5){ push("[vision] 触发相机 · 逐格定位"); setPhase("DISPATCH"); } break;
-        case "DISPATCH":  if(S._phaseT>=0.4){ push("本节拍: 中间窗口 6 个 (火腿臂领做 · 起司臂跟做)"); startCycle(); setPhase("EXECUTING"); } break;
+        case "DISPATCH":  if(S._phaseT>=0.4){ push("本节拍: 中间窗口 12 个 (火腿臂领做 · 起司臂跟做)"); startCycle(); setPhase("EXECUTING"); } break;
         case "EXECUTING": stepExec(dt); break;
         case "ADVANCE": {
           const T=0.95; S.beltShift = 3*SP * Math.min(1, S._phaseT/T);   // 前送 3 格
@@ -462,7 +463,7 @@
             }
             S.cell=nc; S.beltShift=0; S.active=[];
             S.cycle++; S.cycleTime=+(S._clock-S._t0).toFixed(1);
-            S.throughput=Math.round(6*3600/Math.max(S.cycleTime,1));
+            S.throughput=Math.round(12*3600/Math.max(S.cycleTime,1));
             push(`节拍 #${S.cycle} · 前送三格 · ${S.cycleTime.toFixed(1)}s`);
             setPhase("WAIT_LOCK");
           }
@@ -539,10 +540,11 @@
       bases=new Array(n);
       const groups={"-1":[], "1":[]};
       for(let i=0;i<n;i++){ (i%2===0?groups["-1"]:groups["1"]).push(i); }  // 交替分到两侧
+      const standoff = GRID.rows/2*SP + 180;   // 底座退到 4 行窗口之外
       [[-1,groups["-1"]],[1,groups["1"]]].forEach(([side,ids])=>{
         ids.forEach((id,k)=>{
           const t=ids.length<=1?0.5:k/(ids.length-1);
-          bases[id]={x:(t-0.5)*(GRID.cols-1)*SP, y:side*(1.55*SP+140), z:0, yaw:side<0?90:-90, side};
+          bases[id]={x:(t-0.5)*(GRID.cols-1)*SP*0.35, y:side*standoff, z:0, yaw:side<0?90:-90, side};
         });
       });
     }
@@ -823,7 +825,7 @@
   // ---- boot ----
   buildStepper(); buildRowLabels();          // 网格/图例首帧由 render→ensureGrid 按工位建
   scene = makeScene3D($("#cv3d"));           // 3D 场景（在首帧 render 前建好）
-  $("#grid-dims").textContent = `每排${GRID.cols}格 · 窗口3×2`;   // 长带9格：左空|中作业|右完成
+  $("#grid-dims").textContent = `每排${GRID.cols}格 · 窗口3×4=12`;   // 长带9格：左空|中作业|右完成
   tryLive().then(j=>{
     if(j){ setMode(true); render(toRenderState(j)); }
     else { setMode(false); sim=makeSim(); }
