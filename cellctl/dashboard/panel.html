@@ -273,8 +273,8 @@
     </div>
     <div class="grp">
       <span class="lbl">速度 Speed</span>
-      <input type="range" id="spd" min="1" max="20" value="8" step="1">
-      <span class="spd" id="spd-v">8×</span>
+      <input type="range" id="spd" min="1" max="20" value="3" step="1">
+      <span class="spd" id="spd-v">3×</span>
     </div>
     <span class="note" id="note">DEMO · 网页内仿真（未连接控制器）</span>
   </div>
@@ -455,12 +455,12 @@
     function tick(dt){
       S._clock+=dt; S._phaseT+=dt;
       switch(S.phase){
-        case "WAIT_LOCK": if(S._phaseT>=0.6){ push("[line] 到位锁定"); setPhase("CAPTURE"); } break;
-        case "CAPTURE":   if(S._phaseT>=0.5){ push("[vision] 触发相机 · 逐格定位"); setPhase("DISPATCH"); } break;
-        case "DISPATCH":  if(S._phaseT>=0.4){ push("本节拍: 12 份 · 两臂各建 6 份(每层逐片抓放)"); startCycle(); setPhase("EXECUTING"); } break;
+        case "WAIT_LOCK": if(S._phaseT>=1.0){ push("[line] 到位锁定"); setPhase("CAPTURE"); } break;
+        case "CAPTURE":   if(S._phaseT>=0.8){ push("[vision] 触发相机 · 逐格定位"); setPhase("DISPATCH"); } break;
+        case "DISPATCH":  if(S._phaseT>=0.6){ push("本节拍: 12 份 · 两臂各建 6 份(每层逐片抓放)"); startCycle(); setPhase("EXECUTING"); } break;
         case "EXECUTING": stepExec(dt); break;
         case "ADVANCE": {
-          const T=0.95; S.beltShift = 3*SP * Math.min(1, S._phaseT/T);   // 前送 3 格
+          const T=2.2; S.beltShift = 3*SP * Math.min(1, S._phaseT/T);   // 前送 3 格(可见的滑移)
           S.stations.forEach(s=>{ s.status="home"; s.statusTxt="ADVANCE"; s.target=null; s.motion=null; });
           if(S._phaseT>=T){
             const nc={};
@@ -480,7 +480,8 @@
       }
     }
 
-    const ACT_T = 0.26;   // 每个子动作(上去接料/到位/铲子滑放)时长(秒)
+    const ACT_T = 1.4;    // 每个子动作(上去接料/到位/铲子滑放)时长(仿真秒)——
+                          // 默认速度下≈0.5s真实时间,确保"上去拿一片"的行程肉眼可见
     const LBL = {bread:"吐司", ham:"火腿", cheese:"起司"};
     // 每层 3 子动作：pick(上去对应供料线接一片) → approach(到载具上方) → slide(铲子往前滑放)
     // 每份三明治 5 层逐片搭建；一次只拿一片放一片
@@ -713,7 +714,7 @@
     }
     function draw(){ ctx.clearRect(0,0,W,H); conveyor(); feeds(); carriers(); arms(); }
     function frame(){
-      const k=reduce?1:0.16;
+      const k=reduce?1:0.2;   // 缓动快到能在子动作时长内真正"到达"供料线/载具
       if(!reduce) flow=(flow+2.4)%SP;    // 传送带流向动画
       for(const s of stations){const e=effs[s.id], t=targets[s.id]; if(e&&t){e.x+=(t.x-e.x)*k; e.y+=(t.y-e.y)*k; e.z+=(t.z-e.z)*k;}}
       // 视角切换缓动
@@ -764,7 +765,7 @@
   }
 
   // ================= DRIVER =================
-  let sim=null, live=false, playing=true, speed=8, timer=null, scene=null;
+  let sim=null, live=false, playing=true, speed=3, timer=null, scene=null;
 
   function statusTxtFromLive(s){
     return (s.status||"idle").toUpperCase();
