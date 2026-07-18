@@ -535,8 +535,9 @@
   }
   function makeScene3D(canvas){
     const ctx=canvas.getContext("2d");
-    const cam={az:0.72, el:0.8}, camT={az:0.72, el:0.8};   // el 略低，突出高度(供料线在上方)
-    const VIEWS={iso:{az:0.72,el:0.8}, top:{az:0.0,el:1.5}, front:{az:0.0,el:0.30}, side:{az:1.5708,el:0.32}};
+    // el=0.55：供料线成为画面最高物(高于远侧臂/载具)，"架在上方"一目了然
+    const cam={az:0.72, el:0.55}, camT={az:0.72, el:0.55};
+    const VIEWS={iso:{az:0.72,el:0.55}, top:{az:0.0,el:1.5}, front:{az:0.0,el:0.30}, side:{az:1.5708,el:0.32}};
     const CS=170, CH=60, LYR=24;   // SP 用模块级共享值
     const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
     let W=1,H=1,dpr=1, fit={scale:1,ox:0,oy:0};
@@ -549,7 +550,7 @@
       bases=new Array(n);
       const groups={"-1":[], "1":[]};
       for(let i=0;i<n;i++){ (i%2===0?groups["-1"]:groups["1"]).push(i); }  // 交替分到两侧
-      const standoff = GRID.rows/2*SP + 180;   // 底座退到 4 行窗口之外
+      const standoff = GRID.rows/2*SP + 40;    // 底座紧贴 4 行窗口外侧(臂矮于供料线)
       [[-1,groups["-1"]],[1,groups["1"]]].forEach(([side,ids])=>{
         ids.forEach((id,k)=>{
           const t=ids.length<=1?0.5:k/(ids.length-1);
@@ -559,7 +560,7 @@
     }
     const baseWorld=i=> bases[i] || {x:0,y:-(1.55*SP+140),z:0,yaw:90,side:-1};
     // 供料线【高高架在传送带上方】(龙门架)：机械臂就近上去接一片。x 随取料格。
-    const FEED = { bread:{y:0,z:660}, ham:{y:-170,z:600}, cheese:{y:170,z:600} };
+    const FEED = { bread:{y:0,z:720}, ham:{y:-170,z:660}, cheese:{y:170,z:660} };
     const feedX0=()=>(Math.min(...ACTIVE_COLS)-(GRID.cols+1)/2)*SP - SP*0.6;
     const feedX1=()=>(Math.max(...ACTIVE_COLS)-(GRID.cols+1)/2)*SP + SP*0.6;
 
@@ -567,7 +568,9 @@
       const ca=Math.cos(cam.az), sa=Math.sin(cam.az);
       const x1=p.x*ca-p.y*sa, y1=p.x*sa+p.y*ca, z1=p.z;
       const ce=Math.cos(cam.el), se=Math.sin(cam.el);
-      return {rx:x1, ry:(-y1*se+z1*ce), depth:(y1*ce+z1*se)};
+      // 自然透视：近(小y)在画面下方、远(大y)在上方、高(z)向上 —— 深度轴不再颠倒
+      // depth 越大越远(先画)：远=+y1
+      return {rx:x1, ry:(y1*se+z1*ce), depth:(y1*ce+z1*se)};
     }
     const P=p=>{const r=raw(p); return {x:fit.ox+r.rx*fit.scale, y:fit.oy-r.ry*fit.scale, depth:r.depth};};
 
@@ -683,7 +686,7 @@
           dot(f.S,col,9); dot(f.E,col,8); dot(f.W,col,7); tip=f.T;
         } else {                                             // 两连杆缓动估计
           const e=effs[s.id]; if(!e) return;
-          const sh={x:b.x,y:b.y,z:250}, el={x:(sh.x+e.x)/2,y:(sh.y+e.y)/2,z:Math.max(sh.z,e.z)+180};
+          const sh={x:b.x,y:b.y,z:250}, el={x:(sh.x+e.x)/2,y:(sh.y+e.y)/2,z:Math.max(sh.z,e.z)+120};
           seg(sh,el,col,15); seg(el,e,col,13); dot(sh,col,9); dot(el,col,8); tip=e;
         }
         // 末端 = 铲子(扁平) + 运送中的切片(接到料后到放下前)
@@ -752,7 +755,7 @@
             else if(s.motion==="approach") t={x:w.x, y:w.y, z:250};          // 移到载具上方
             else if(s.motion==="slide")    t={x:w.x+SP*0.34, y:w.y, z:150};  // 铲子往前滑放
             else                           t={x:w.x, y:w.y, z:170};
-          } else { t={x:b.x, y:b.y-(b.side||-1)*160, z:560}; }               // home/idle：抬起
+          } else { t={x:b.x, y:b.y-(b.side||-1)*160, z:320}; }               // home/idle：低位待命(明显低于供料线)
           targets[s.id]=t;
           if(!effs[s.id]) effs[s.id]={x:t.x,y:t.y,z:t.z};
         });
