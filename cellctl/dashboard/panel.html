@@ -1,0 +1,888 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工位单元控制 · 操作看板</title>
+<style>
+  :root{
+    --bg:#0E141A; --panel:#151E26; --panel2:#1B2731; --line:#26333E;
+    --text:#DCE4EA; --muted:#82929E; --faint:#5A6A76;
+    --accent:#FFB020;              /* 信号琥珀：品牌 / 当前状态 / 焦点 */
+    --ok:#3DD68C; --fault:#FF5257; --idle:#64748B;
+    --ham:#FF7A5C; --egg:#F4C430;  /* 物料色：火腿 / 蛋皮 */
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI","Noto Sans SC",sans-serif;
+    --r:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 78% -8%, rgba(255,176,32,.06), transparent 60%),
+      var(--bg);
+    color:var(--text); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased; padding:18px; min-height:100vh;
+  }
+  .wrap{max-width:1240px; margin:0 auto; display:flex; flex-direction:column; gap:14px}
+
+  /* ---- header ---- */
+  header.bar{
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    padding:14px 18px; background:linear-gradient(180deg,var(--panel2),var(--panel));
+    border:1px solid var(--line); border-radius:var(--r);
+  }
+  .brand{display:flex; flex-direction:column; gap:3px; margin-right:auto}
+  .brand h1{margin:0; font-size:17px; font-weight:650; letter-spacing:.01em}
+  .brand .sub{font-size:11px; color:var(--muted); letter-spacing:.14em; text-transform:uppercase}
+  .mode{
+    font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.1em;
+    padding:4px 9px; border-radius:999px; border:1px solid var(--line);
+    display:inline-flex; align-items:center; gap:7px; white-space:nowrap;
+  }
+  .mode .dot{width:7px; height:7px; border-radius:50%; background:var(--accent);
+    box-shadow:0 0 0 0 rgba(255,176,32,.5); animation:beat 1.8s infinite}
+  .mode.live .dot{background:var(--ok); box-shadow:0 0 8px var(--ok); animation:beat 1.4s infinite}
+  @keyframes beat{0%,100%{opacity:1}50%{opacity:.35}}
+  .telem{display:flex; gap:22px}
+  .kpi{display:flex; flex-direction:column; gap:2px; min-width:74px}
+  .kpi .v{font-family:var(--mono); font-size:23px; font-weight:600; font-variant-numeric:tabular-nums; line-height:1}
+  .kpi .l{font-size:10px; color:var(--muted); letter-spacing:.12em; text-transform:uppercase}
+  .kpi .v small{font-size:12px; color:var(--faint); font-weight:500}
+
+  /* ---- state stepper ---- */
+  .stepper{
+    display:flex; align-items:stretch; gap:6px; padding:10px;
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
+    overflow-x:auto;
+  }
+  .step{
+    flex:1 1 0; min-width:96px; padding:9px 11px; border-radius:8px;
+    background:var(--panel2); border:1px solid transparent; position:relative;
+    display:flex; flex-direction:column; gap:4px;
+  }
+  .step .n{font-family:var(--mono); font-size:10px; color:var(--faint)}
+  .step .s{font-family:var(--mono); font-size:12.5px; color:var(--muted); letter-spacing:.02em}
+  .step.on{border-color:var(--accent); background:rgba(255,176,32,.10)}
+  .step.on .s{color:var(--accent); font-weight:600}
+  .step.on .n{color:var(--accent)}
+  .step.done .s{color:var(--text)}
+  .step.fault{border-color:var(--fault); background:rgba(255,82,87,.12)}
+  .step.fault .s,.step.fault .n{color:var(--fault)}
+
+  /* ---- main grid ---- */
+  .main{display:grid; grid-template-columns:270px 1fr 300px; gap:14px}
+  @media(max-width:1040px){.main{grid-template-columns:1fr}}
+  .col{display:flex; flex-direction:column; gap:14px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px}
+  .card h2{
+    margin:0 0 12px; font-size:11px; color:var(--muted);
+    letter-spacing:.16em; text-transform:uppercase; font-weight:600;
+    display:flex; align-items:center; gap:8px;
+  }
+  .card h2 .tag{margin-left:auto; font-family:var(--mono); letter-spacing:0; color:var(--faint); text-transform:none}
+
+  /* ---- station cards ---- */
+  .stn{padding-top:2px}
+  .stn + .stn{margin-top:12px; padding-top:14px; border-top:1px solid var(--line)}
+  .stn .top{display:flex; align-items:center; gap:9px; margin-bottom:9px}
+  .swatch{width:9px; height:9px; border-radius:2px; flex:none}
+  .stn .nm{font-weight:600; font-size:14px}
+  .stn .br{font-size:11px; color:var(--muted); margin-left:auto; font-family:var(--mono)}
+  .chip{
+    font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.06em;
+    padding:3px 8px; border-radius:6px; text-transform:uppercase;
+    border:1px solid var(--line); color:var(--muted); background:var(--panel2);
+  }
+  .chip.picking{color:var(--accent); border-color:rgba(255,176,32,.4); background:rgba(255,176,32,.08)}
+  .chip.placing{color:var(--accent); border-color:rgba(255,176,32,.4); background:rgba(255,176,32,.08)}
+  .chip.home{color:var(--ok); border-color:rgba(61,214,140,.4); background:rgba(61,214,140,.08)}
+  .chip.fault{color:var(--fault); border-color:rgba(255,82,87,.45); background:rgba(255,82,87,.1)}
+  .rows{display:flex; flex-direction:column; gap:6px; font-size:12px}
+  .rows .r{display:flex; justify-content:space-between; align-items:center; gap:8px}
+  .rows .k{color:var(--muted)}
+  .rows .val{font-family:var(--mono); color:var(--text); font-variant-numeric:tabular-nums}
+  .vis{display:flex; gap:10px}
+  .vis span{font-family:var(--mono); color:var(--faint); font-size:11.5px}
+  .vis b{color:var(--text); font-weight:600}
+  .home-ind{display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11px}
+  .home-ind .d{width:7px; height:7px; border-radius:50%; background:var(--idle)}
+  .home-ind.yes .d{background:var(--ok); box-shadow:0 0 7px var(--ok)}
+
+  /* ---- carrier window (hero) ---- */
+  .winwrap{display:flex; flex-direction:column; gap:12px}
+  .grid{
+    display:grid; gap:9px;
+    grid-template-columns:repeat(var(--cols,4),1fr);
+  }
+  .cell{
+    aspect-ratio:5/4; border-radius:9px; border:1px solid var(--line);
+    background:var(--panel2); padding:9px; position:relative;
+    display:flex; flex-direction:column; justify-content:space-between;
+    transition:border-color .2s, background .2s, transform .2s;
+  }
+  .cell .cid{font-family:var(--mono); font-size:11px; color:var(--faint)}
+  .cell.queued{opacity:.42}
+  .cell.queued .cid{color:var(--faint)}
+  .cell.lead{opacity:.4}                                   /* 左：空(来料) */
+  .cell.doneZone{opacity:.92}                              /* 右：已完成(流出) */
+  .cell.win{border-color:rgba(255,176,32,.32)}             /* 中：作业窗口 */
+  .cell.active{border-color:var(--accent); background:rgba(255,176,32,.07); transform:translateY(-2px);
+    box-shadow:0 6px 18px -8px rgba(255,176,32,.5)}
+  .cell.active .cid{color:var(--accent)}
+  .cell.skip{border-color:var(--fault); background:rgba(255,82,87,.07)}
+  .cell.skip .cid{color:var(--fault)}
+  .pips{display:flex; gap:3px; flex-wrap:wrap}
+  .pip{width:9px; height:9px; border-radius:3px; border:1px solid rgba(255,255,255,.14);
+    opacity:.22; transition:opacity .2s, transform .2s}
+  .pip.on{opacity:1}
+  .pip.pop{animation:pop .35s ease}
+  @keyframes pop{0%{transform:scale(.2)}60%{transform:scale(1.25)}100%{transform:scale(1)}}
+  .winmeta{display:flex; align-items:center; gap:16px; flex-wrap:wrap}
+  .legend{display:flex; gap:14px; margin-left:auto}
+  .legend .li{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); font-family:var(--mono)}
+  .legend .sw{width:11px; height:11px; border-radius:3px}
+  .rowlabels{display:flex; gap:9px; font-family:var(--mono); font-size:10px; color:var(--faint)}
+  .rowtag{padding:2px 7px; border:1px solid var(--line); border-radius:5px}
+  .rowtag.act{color:var(--accent); border-color:rgba(255,176,32,.4)}
+
+  /* ---- zones ---- */
+  .zone{display:flex; align-items:center; gap:9px; padding:8px 0; font-size:12.5px}
+  .zone + .zone{border-top:1px solid var(--line)}
+  .zone .zn{font-family:var(--mono); color:var(--text)}
+  .zone .zd{color:var(--faint); font-size:10.5px; margin-left:2px}
+  .zone .own{margin-left:auto; font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:5px;
+    color:var(--faint); border:1px solid var(--line)}
+  .zone.held .own{color:var(--accent); border-color:rgba(255,176,32,.4); background:rgba(255,176,32,.08)}
+  .zone .lk{width:8px; height:8px; border-radius:2px; background:var(--line)}
+  .zone.held .lk{background:var(--accent); box-shadow:0 0 7px var(--accent)}
+
+  /* ---- log ---- */
+  .log{display:flex; flex-direction:column; gap:0; font-family:var(--mono); font-size:11.5px; max-height:210px; overflow:hidden}
+  .log .ln{display:flex; gap:9px; padding:4px 0; border-top:1px solid rgba(38,51,62,.5); color:var(--muted)}
+  .log .ln:first-child{border-top:0}
+  .log .ln.new{color:var(--text); animation:fadein .4s ease}
+  .log .ln .t{color:var(--faint); flex:none}
+  .log .ln.fault{color:var(--fault)}
+  @keyframes fadein{from{opacity:0;transform:translateY(-3px)}to{opacity:1}}
+
+  /* ---- controls ---- */
+  .controls{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    padding:12px 16px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
+  }
+  .controls .grp{display:flex; align-items:center; gap:9px}
+  .controls .lbl{font-size:11px; color:var(--muted); letter-spacing:.1em; text-transform:uppercase}
+  button{
+    font-family:var(--sans); font-size:13px; font-weight:600; color:var(--text);
+    background:var(--panel2); border:1px solid var(--line); border-radius:8px;
+    padding:8px 14px; cursor:pointer; transition:border-color .15s, background .15s, color .15s;
+  }
+  button:hover{border-color:var(--accent); color:var(--accent)}
+  button.primary{background:rgba(255,176,32,.12); border-color:rgba(255,176,32,.5); color:var(--accent)}
+  button.danger:hover{border-color:var(--fault); color:var(--fault)}
+  button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  input[type=range]{accent-color:var(--accent); cursor:pointer}
+  .spd{font-family:var(--mono); font-size:12px; color:var(--text); min-width:34px; font-variant-numeric:tabular-nums}
+  .note{margin-left:auto; font-size:11px; color:var(--faint); font-family:var(--mono)}
+
+  /* ---- 3D viewport ---- */
+  .view3d{padding:0; overflow:hidden; position:relative}
+  .view3d h2{padding:14px 14px 0; margin-bottom:0}
+  #cv3d{display:block; width:100%; height:360px; touch-action:none; cursor:grab;
+    background:radial-gradient(130% 110% at 50% -10%, #17232c, #0c1218)}
+  #cv3d:active{cursor:grabbing}
+  .v3dhint{position:absolute; right:14px; bottom:10px; font-family:var(--mono);
+    font-size:10.5px; color:var(--faint); pointer-events:none; letter-spacing:.05em}
+  .v3dviews{margin-left:auto; display:inline-flex; gap:4px}
+  .v3dviews button{font-family:var(--mono); font-size:11px; padding:3px 9px; background:var(--panel2);
+    border:1px solid var(--line); color:var(--muted); border-radius:6px; cursor:pointer; letter-spacing:.03em}
+  .v3dviews button:hover{color:var(--accent); border-color:var(--accent)}
+  .v3dviews button.on{color:var(--accent); border-color:rgba(255,176,32,.5); background:rgba(255,176,32,.1)}
+  @media(max-width:1040px){#cv3d{height:300px}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <div class="brand">
+      <h1>工位单元控制 · 操作看板</h1>
+      <span class="sub">Cell Controller · Operator Panel</span>
+    </div>
+    <div class="telem">
+      <div class="kpi"><span class="v" id="k-cycle">0</span><span class="l">节拍 Cycle</span></div>
+      <div class="kpi"><span class="v" id="k-tput">—<small> /h</small></span><span class="l">产能 Throughput</span></div>
+      <div class="kpi"><span class="v" id="k-time">—<small> s</small></span><span class="l">节拍用时 Cycle t</span></div>
+    </div>
+    <span class="mode" id="mode"><span class="dot"></span><span id="mode-txt">DEMO</span></span>
+  </header>
+
+  <div class="stepper" id="stepper"></div>
+
+  <div class="card view3d">
+    <h2>三维工作单元 · 实时 3D
+      <span class="v3dviews" id="v3dviews">
+        <button data-v="iso" class="on">等距</button><button data-v="top">顶视</button><button data-v="front">正视</button><button data-v="side">侧视</button>
+      </span>
+    </h2>
+    <canvas id="cv3d"></canvas>
+    <span class="v3dhint" id="v3dhint">拖拽旋转 · 关节角:估计</span>
+  </div>
+
+  <div class="main">
+    <!-- left: stations -->
+    <div class="col">
+      <div class="card">
+        <h2>机械臂 Arms <span class="tag" id="arm-count"></span></h2>
+        <div id="stations"></div>
+      </div>
+    </div>
+
+    <!-- center: carrier window -->
+    <div class="col">
+      <div class="card winwrap">
+        <h2>载具窗口 Carrier Window <span class="tag" id="grid-dims"></span></h2>
+        <div class="rowlabels" id="rowlabels"></div>
+        <div class="grid" id="grid" style="--cols:4"></div>
+        <div class="winmeta">
+          <div class="rowtag act">四线独立 · 工位列C5固定 · 每份完成即前送一格 · 供料在上游上方</div>
+          <div class="legend" id="legend"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- right: zones + log -->
+    <div class="col">
+      <div class="card">
+        <h2>区域互锁 Zone Locks</h2>
+        <div id="zones"></div>
+      </div>
+      <div class="card">
+        <h2>事件 Event Log</h2>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls" id="controls">
+    <div class="grp">
+      <button class="primary" id="btn-play">暂停 Pause</button>
+      <button id="btn-reset">复位 Reset</button>
+      <button class="danger" id="btn-fault">注入故障 Fault</button>
+    </div>
+    <div class="grp">
+      <span class="lbl">速度 Speed</span>
+      <input type="range" id="spd" min="1" max="20" value="3" step="1">
+      <span class="spd" id="spd-v">3×</span>
+    </div>
+    <span class="note" id="note">DEMO · 网页内仿真（未连接控制器）</span>
+  </div>
+</div>
+
+<script>
+"use strict";
+(function(){
+  // ---- model constants (mirror cellctl config) ----
+  const PHASES = [
+    ["01","WAIT_LOCK"],["02","CAPTURE"],["03","DISPATCH"],
+    ["04","EXECUTING"],["05","ADVANCE"]
+  ];
+  // 传送带每排 9 格：左=空载具(上游来料)｜C5=固定组装工位｜右=已完成(流出)。
+  // 每条线做完【一份】就前送【一格】(工位列固定)；供料线架在上游段上方。
+  const GRID = {rows:4, cols:9};
+  const ACTIVE_COLS = [5];         // 固定组装工位列
+  const FEED_COLS = [2,3,4];       // 供料线悬在上游(还没做到)这段的上方
+  const SP = 260;                  // 载具间距(世界mm)，DEMO 与 3D 共用（前送一格=SP）
+  const ITEMCOLOR = {bread:"#D9B382", ham:"#FF7A5C", cheese:"#F4C430"};  // 吐司 / 火腿 / 起司
+  const STATIONS = [
+    {id:"S3_ham",    nm:"组装臂A · 近2行", br:"节卡 Zu7", item:"bread", color:"var(--ham)"},
+    {id:"S5_cheese", nm:"组装臂B · 远2行", br:"节卡 Zu7", item:"bread", color:"var(--egg)"}
+  ];
+  const ZONES = [
+    {id:"Z_FEED_HAM", d:"火腿出料"},{id:"Z_WINDOW", d:"作业窗口(共享)"},
+    {id:"Z_FEED_CHEESE", d:"起司出料"}
+  ];
+  // 已知工位用物料色；其余按顺序取调色板 —— 支持任意品牌/数量的混合车队
+  const KNOWN = {S3_ham:"var(--ham)", S5_cheese:"var(--egg)", S5_egg:"var(--egg)"};
+  const PALETTE = ["#FF7A5C","#F4C430","#5AA9FF","#B891FF","#3DD68C","#FF9F1C","#E86AA6"];
+  const colorFor = (id, idx) => KNOWN[id] || PALETTE[idx % PALETTE.length];
+
+  // ---- DOM refs ----
+  const $ = s => document.querySelector(s);
+  const stepperEl=$("#stepper"), stationsEl=$("#stations"), gridEl=$("#grid"),
+        zonesEl=$("#zones"), logEl=$("#log"), rowLabelsEl=$("#rowlabels");
+
+  // build static scaffolding
+  function buildStepper(){
+    stepperEl.innerHTML = PHASES.map(([n,s])=>
+      `<div class="step" data-s="${s}"><span class="n">${n}</span><span class="s">${s}</span></div>`).join("");
+  }
+  function buildRowLabels(){
+    let h="";
+    for(let r=1;r<=GRID.rows;r++) h+=`<div class="rowtag ${r===1?'act':''}">R${r}</div>`;
+    rowLabelsEl.innerHTML=h;
+  }
+  let _gridSig = null;              // 当前 2D 网格依据的尺寸签名
+  const winMax = () => Math.max(...ACTIVE_COLS), winMin = () => Math.min(...ACTIVE_COLS);
+  function buildGrid(){
+    gridEl.style.setProperty("--cols",GRID.cols);
+    let h="";
+    for(let r=1;r<=GRID.rows;r++) for(let c=1;c<=GRID.cols;c++){
+      const id=`R${r}C${c}`;
+      const zone = c<winMin() ? "lead" : c>winMax() ? "doneZone" : "win";   // 空/窗口/已完成
+      h+=`<div class="cell ${zone}" data-id="${id}"><span class="cid">${id}</span><div class="pips"></div></div>`;
+    }
+    gridEl.innerHTML=h;
+    document.getElementById("legend").innerHTML =
+      `<div class="li"><span class="sw" style="background:${ITEMCOLOR.bread}"></span>吐司</div>`+
+      `<div class="li"><span class="sw" style="background:${ITEMCOLOR.ham}"></span>火腿</div>`+
+      `<div class="li"><span class="sw" style="background:${ITEMCOLOR.cheese}"></span>起司</div>`;
+    _gridSig = `${GRID.rows}x${GRID.cols}`;
+  }
+  function ensureGrid(){ if(_gridSig !== `${GRID.rows}x${GRID.cols}`) buildGrid(); }
+
+  // ---- render (pure: paints DOM from a state object) ----
+  function render(st){
+    ensureGrid();                      // 网格尺寸变化时重建（2×9）
+    $("#k-cycle").textContent = st.cycle;
+    $("#k-tput").innerHTML = st.throughput ? st.throughput+`<small> /h</small>` : "—<small> /h</small>";
+    $("#k-time").innerHTML = st.cycleTime ? st.cycleTime.toFixed(1)+`<small> s</small>` : "—<small> s</small>";
+
+    // stepper
+    const order = PHASES.map(p=>p[1]);
+    const cur = order.indexOf(st.phase);
+    [...stepperEl.children].forEach((el,i)=>{
+      el.className = "step" + (st.phase==="FAULT" && i===cur ? "" :
+        i===cur ? " on" : i<cur ? " done" : "");
+    });
+    if(st.phase==="FAULT"){
+      // mark EXECUTING slot as fault
+      const ex = stepperEl.querySelector('[data-s="EXECUTING"]');
+      if(ex) ex.className="step fault";
+    }
+
+    // stations
+    $("#arm-count").textContent = st.stations.length+" 台";
+    stationsEl.innerHTML = st.stations.map((s,i)=>{
+      const v=s.vision||{};
+      const homeCls = s.atHome ? "yes":"";
+      return `<div class="stn">
+        <div class="top">
+          <span class="swatch" style="background:${colorFor(s.id,i)}"></span>
+          <span class="nm">${s.nm}</span>
+          <span class="br">${s.br}</span>
+        </div>
+        <div class="rows">
+          <div class="r"><span class="k">状态</span><span class="chip ${s.status}">${s.statusTxt}</span></div>
+          <div class="r"><span class="k">目标</span><span class="val">${s.target||"—"}</span></div>
+          <div class="r"><span class="k">视觉偏差</span>
+            <span class="vis">
+              <span>dx <b>${fmt(v.dx)}</b></span><span>dy <b>${fmt(v.dy)}</b></span><span>dθ <b>${fmt(v.dth)}</b></span>
+            </span></div>
+          <div class="r"><span class="k">累计完成</span><span class="val">${s.done.length} 份</span></div>
+          <div class="r"><span class="k">安全岛 HOME</span>
+            <span class="home-ind ${homeCls}"><span class="d"></span>${s.atHome?"在位":"离位"}</span></div>
+        </div>
+      </div>`;
+    }).join("");
+
+    // grid pips —— 由 cellItems(每格已放的物料色)驱动
+    const items = st.cellItems || {};
+    const activeSet = new Set(Array.isArray(st.active) ? st.active : (st.active ? [st.active.cell] : []));
+    [...gridEl.children].forEach(cell=>{
+      const id=cell.dataset.id;
+      cell.classList.toggle("active", activeSet.has(id));
+      const colors = items[id] || [];
+      const pips = cell.querySelector(".pips");
+      const want = colors.map(c=>`<span class="pip on" style="background:${c}"></span>`).join("");
+      if(pips._h !== want){ pips.innerHTML = want; pips._h = want; }  // 仅变化时重绘
+    });
+
+    // zones
+    zonesEl.innerHTML = st.zones.map(z=>{
+      const held = !!z.owner;
+      return `<div class="zone ${held?'held':''}">
+        <span class="lk"></span>
+        <span class="zn">${z.id}<span class="zd"> · ${z.d}</span></span>
+        <span class="own">${held? z.owner : "FREE"}</span>
+      </div>`;
+    }).join("");
+
+    // log
+    logEl.innerHTML = st.log.slice(0,9).map((e,i)=>
+      `<div class="ln ${i===0?'new':''} ${e.fault?'fault':''}"><span class="t">${e.t}</span><span>${e.msg}</span></div>`
+    ).join("");
+
+    if(scene){ scene.update(st);   // 同一份状态喂给 3D 场景
+      const hint=document.getElementById("v3dhint");
+      if(hint) hint.textContent = "拖拽旋转 · 关节角:" + (scene.hasJoints()?"真机 FK":"估计");
+    }
+  }
+  const fmt = v => (v==null?"—":(v>=0?"+":"")+v.toFixed(1));
+
+  // ================= DEMO SIMULATION =================
+  // 四条输送线【各自独立运作,不同步】：A臂管 1/2 线、B臂管 3/4 线。
+  // 臂把当前线窗口 3 格建完(每份5层,每层上去供料线抓一片) → 该线【自己】前送3格，
+  // 同时臂立刻转去做另一条线 —— 没有全线同步的节拍墙。
+  function makeSim(){
+    const SEQ = ["bread","ham","bread","cheese","bread"];   // 三片吐司夹火腿/起司(酱由泵,略)
+    const LANES = [[1,2],[3,4]];                            // 每臂管的两条线
+    const STA_C = ACTIVE_COLS[0];                           // 固定组装工位列(C5)
+    const staCell = r => `R${r}C${STA_C}`;
+    const LANE_T = 1.1;                                     // 单线前送【一格】的滑移时长(仿真秒)
+    const S = {
+      phase:"WAIT_LOCK", cycle:0, cycleTime:0, throughput:0,
+      stations:STATIONS.map(s=>({...s, status:"idle", statusTxt:"待命", motion:null,
+        target:null, vision:{dx:0,dy:0,dth:0}, done:[], atHome:true})),
+      zones:ZONES.map(z=>({...z, owner:null})),
+      log:[], active:[], skips:[], laneShift:{1:0,2:0,3:0,4:0}, cell:{},
+      _clock:0, _phaseT:0, _faultReq:false, _lastAdv:0, _out:0, _t0:0,
+      _adv:{},                                              // 正在前送的线 {row: 已进行时长}
+      // B 臂错峰启动(wait0)：加上动作时长抖动，四条线自然错开、各走各的
+      _arm:[{lane:1,layer:0,sub:"pick",t:0,need:1.4,wait0:0,total:0},
+            {lane:3,layer:0,sub:"pick",t:0,need:1.4,wait0:3.5,total:0}]
+    };
+    // 初始：工位列右侧=整份三明治(流出区)；工位列及左侧=空
+    for(let r=1;r<=GRID.rows;r++)for(let c=1;c<=GRID.cols;c++)
+      S.cell[`R${r}C${c}`] = c>STA_C ? SEQ.slice() : [];
+    const push = (msg,fault)=>{ S.log.unshift({t:S._clock.toFixed(1)+"s", msg, fault}); if(S.log.length>30)S.log.pop(); };
+    const setPhase = p => { S.phase=p; S._phaseT=0; };
+
+    function startLaneAdvance(r){ S._adv[r]=0; push(`[线${r}] 1 份完成 · 前送一格`); }
+    function tickAdvances(dt){
+      for(const r of Object.keys(S._adv)){
+        S._adv[r]+=dt; S.laneShift[r]=SP*Math.min(1,S._adv[r]/LANE_T);
+        if(S._adv[r]>=LANE_T){
+          for(let c=GRID.cols;c>=1;c--){ const src=c-1;   // 整线右移一格
+            S.cell[`R${r}C${c}`] = src>=1 ? S.cell[`R${r}C${src}`] : []; }
+          S.laneShift[r]=0; delete S._adv[r];
+          S.cycle++; S._out+=1;
+          S.cycleTime=+(S._clock-S._lastAdv).toFixed(1); S._lastAdv=S._clock;
+          S.throughput=Math.round(S._out*3600/Math.max(S._clock-S._t0,1));
+          push(`[线${r}] 前送一格 · 累计流出 ${S._out} 份`);
+        }
+      }
+    }
+
+    function tick(dt){
+      S._clock+=dt; S._phaseT+=dt;
+      switch(S.phase){
+        case "WAIT_LOCK": if(S._phaseT>=1.0){ push("[line] 到位锁定"); setPhase("CAPTURE"); } break;
+        case "CAPTURE":   if(S._phaseT>=0.8){ push("[vision] 触发相机 · 逐格定位"); setPhase("DISPATCH"); } break;
+        case "DISPATCH":  if(S._phaseT>=0.6){ push("连续运行: 四线独立 · 每份完成即前送一格");
+          S._t0=S._clock; S._lastAdv=S._clock; setPhase("EXECUTING"); } break;
+        case "EXECUTING": tickAdvances(dt); stepExec(dt); break;
+        case "FAULT": tickAdvances(dt); break;   // 已在途的线走完,臂停
+      }
+    }
+
+    const ACT_T = 1.4;    // 每个子动作(上去接料/到位/铲子滑放)基准时长(仿真秒)
+    const nextNeed = () => ACT_T*(0.75+0.5*Math.random());  // 抖动:各线节奏自然错开
+    const LBL = {bread:"吐司", ham:"火腿", cheese:"起司"};
+    // 每层 3 子动作：pick(上去供料线接一片) → approach(到载具上方) → slide(铲子前滑放下)
+    function buildArm(dt, A, k){
+      const L=S._arm[k];
+      if(L.wait0>0){ L.wait0-=dt; A.status="idle"; A.statusTxt="错峰启动中"; A.motion=null; A.target=null; return; }
+      if(S._adv[L.lane]!==undefined){                       // 当前线在前送 → 换另一条线继续做
+        const other=LANES[k].find(r=>r!==L.lane);
+        if(S._adv[other]===undefined){ L.lane=other; L.layer=0; L.sub="pick"; L.t=0; }
+        else { A.status="idle"; A.statusTxt="等待前送"; A.motion=null; A.target=null; return; }
+      }
+      const id=staCell(L.lane), item=SEQ[L.layer]; A.item=item;
+      if(L.sub==="pick"){ A.status="picking"; A.statusTxt=`线${L.lane}·取${LBL[item]}`; A.motion="pick"; A.target=id;
+        L.t+=dt; if(L.t>=L.need){ L.sub="approach"; L.t=0; L.need=nextNeed(); } }
+      else if(L.sub==="approach"){ A.status="placing"; A.statusTxt="到位"; A.motion="approach"; A.target=id;
+        L.t+=dt; if(L.t>=L.need){ L.sub="slide"; L.t=0; L.need=nextNeed(); } }
+      else { A.status="placing"; A.statusTxt="铲入·滑放"; A.motion="slide"; A.target=id;
+        L.t+=dt; if(L.t>=L.need){ L.need=nextNeed(); S.cell[id].push(item);
+          push(`[${LBL[item]}] 线${L.lane} · 第${L.layer+1}/${SEQ.length}层`);
+          L.layer++; L.sub="pick"; L.t=0;
+          if(L.layer>=SEQ.length){                           // 一份完成 → 该线立即前送一格
+            L.layer=0; L.total++;
+            if(S._faultReq && k===1){ A.status="fault"; A.statusTxt="FAULT"; A.atHome=false;
+              push(`[线${L.lane}] B 臂故障 — 该线暂停`, true); setPhase("FAULT"); return; }
+            startLaneAdvance(L.lane);
+            const other=LANES[k].find(r=>r!==L.lane);        // 前送期间转做另一条线
+            if(S._adv[other]===undefined){ L.lane=other; }
+          } } }
+      A.done=new Array(L.total).fill(1);                     // 累计完成份数(供工位卡显示)
+    }
+    function stepExec(dt){
+      const A=S.stations[0], B=S.stations[1];
+      buildArm(dt,A,0); buildArm(dt,B,1);
+      S.active=[A.status==="placing"?A.target:null, B.status==="placing"?B.target:null].filter(Boolean);
+    }
+
+    function injectFault(){ S._faultReq=true; push("⚠ 已请求注入故障（B臂下次完线时故障）"); }
+    function reset(){
+      S._faultReq=false;
+      S.stations.forEach(s=>{ s.status="idle"; s.statusTxt="待命"; s.atHome=true; s.target=null; });
+      if(S.phase==="FAULT"){ push("故障已复位 · 恢复运行"); setPhase("EXECUTING"); }
+    }
+    // 传给渲染：cell → 颜色数组
+    S.cellColors = () => { const m={}; for(const id in S.cell) m[id]=S.cell[id].map(k=>ITEMCOLOR[k]); return m; };
+    return {S, tick, injectFault, reset};
+  }
+  const rand = (a,b)=> +(a+Math.random()*(b-a)).toFixed(1);
+
+  // ================= 3D 场景（Canvas 等距投影，无依赖）=================
+  // 由 render() 的同一份状态驱动：机械臂随 取料/放置/回HOME 实时伸向目标，
+  // 载具随放料逐层叠起，当前作业格高亮。
+  const HEXKNOWN={S3_ham:"#FF7A5C", S5_cheese:"#F4C430", S5_egg:"#F4C430"};
+  const colorHex=(id,idx)=>HEXKNOWN[id]||PALETTE[idx%PALETTE.length];
+  function shadeHex(hex,f){
+    const n=parseInt(hex.slice(1),16);
+    const r=Math.min(255,((n>>16)&255)*f)|0, g=Math.min(255,((n>>8)&255)*f)|0, b=Math.min(255,(n&255)*f)|0;
+    return `rgb(${r},${g},${b})`;
+  }
+  function makeScene3D(canvas){
+    const ctx=canvas.getContext("2d");
+    // el=0.55：供料线成为画面最高物(高于远侧臂/载具)，"架在上方"一目了然
+    const cam={az:0.72, el:0.55}, camT={az:0.72, el:0.55};
+    const VIEWS={iso:{az:0.72,el:0.55}, top:{az:0.0,el:1.5}, front:{az:0.0,el:0.30}, side:{az:1.5708,el:0.32}};
+    const CS=170, CH=60, LYR=24;   // SP 用模块级共享值
+    const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
+    let W=1,H=1,dpr=1, fit={scale:1,ox:0,oy:0};
+    let stations=[], cellItems={}, activeSet=new Set(), faulted={}, effs={}, targets={}, drag=null, nStat=0;
+    let jointsById={}, kinById={}, hasJoints=false, bases=[], flow=0, laneShift={};
+
+    // 传送带沿 X；载具 4(沿带) × 3(跨带=3轨道) 居中；机械臂分列两侧对面而立
+    const cellWorld=(r,c)=>({x:(c-(GRID.cols+1)/2)*SP, y:(r-(GRID.rows+1)/2)*SP, z:0});
+    function ensureBases(n){
+      bases=new Array(n);
+      const groups={"-1":[], "1":[]};
+      for(let i=0;i<n;i++){ (i%2===0?groups["-1"]:groups["1"]).push(i); }  // 交替分到两侧
+      const standoff = GRID.rows/2*SP + 40;    // 底座紧贴 4 行窗口外侧(臂矮于供料线)
+      [[-1,groups["-1"]],[1,groups["1"]]].forEach(([side,ids])=>{
+        ids.forEach((id,k)=>{
+          const t=ids.length<=1?0.5:k/(ids.length-1);
+          bases[id]={x:(t-0.5)*(GRID.cols-1)*SP*0.35, y:side*standoff, z:0, yaw:side<0?90:-90, side};
+        });
+      });
+    }
+    const baseWorld=i=> bases[i] || {x:0,y:-(1.55*SP+140),z:0,yaw:90,side:-1};
+    // 供料线【架在上游段上方】(龙门架)：臂朝上游上方接一片,回工位放——最顺手。
+    const FEED = { bread:{y:0,z:720}, ham:{y:-170,z:660}, cheese:{y:170,z:660} };
+    const feedX0=()=>(Math.min(...FEED_COLS)-(GRID.cols+1)/2)*SP - SP*0.5;
+    const feedX1=()=>(Math.max(...FEED_COLS)-(GRID.cols+1)/2)*SP + SP*0.5;
+
+    function raw(p){
+      const ca=Math.cos(cam.az), sa=Math.sin(cam.az);
+      const x1=p.x*ca-p.y*sa, y1=p.x*sa+p.y*ca, z1=p.z;
+      const ce=Math.cos(cam.el), se=Math.sin(cam.el);
+      // 自然透视：近(小y)在画面下方、远(大y)在上方、高(z)向上 —— 深度轴不再颠倒
+      // depth 越大越远(先画)：远=+y1
+      return {rx:x1, ry:(y1*se+z1*ce), depth:(y1*ce+z1*se)};
+    }
+    const P=p=>{const r=raw(p); return {x:fit.ox+r.rx*fit.scale, y:fit.oy-r.ry*fit.scale, depth:r.depth};};
+
+    function refit(){
+      const n=Math.max(nStat,1); ensureBases(n);
+      const pts=[];
+      const bx0=(1-(GRID.cols+1)/2)*SP-SP*0.9, bx1=(GRID.cols-(GRID.cols+1)/2)*SP+SP*0.9, yh=GRID.rows/2*SP+SP*0.45;
+      pts.push({x:bx0,y:-yh,z:0},{x:bx1,y:yh,z:0},{x:bx0,y:yh,z:0},{x:bx1,y:-yh,z:0});
+      for(let i=0;i<n;i++){const b=baseWorld(i); pts.push({x:b.x,y:b.y,z:720},{x:b.x,y:b.y,z:0});}
+      for(const k in FEED){ const f=FEED[k]; pts.push({x:feedX0(),y:f.y,z:f.z+40},{x:feedX1(),y:f.y,z:f.z+40}); }  // 上方供料线(含标签高度)
+      let mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9;
+      for(const p of pts){const r=raw(p); const sx=r.rx, sy=-r.ry;
+        mnx=Math.min(mnx,sx);mxx=Math.max(mxx,sx);mny=Math.min(mny,sy);mxy=Math.max(mxy,sy);}
+      const m=28, bw=(mxx-mnx)||1, bh=(mxy-mny)||1;
+      fit.scale=Math.min((W-2*m)/bw,(H-2*m)/bh);
+      fit.ox=m-mnx*fit.scale+((W-2*m)-bw*fit.scale)/2;
+      fit.oy=m-mny*fit.scale+((H-2*m)-bh*fit.scale)/2;
+    }
+    function resize(){
+      dpr=Math.min(2,window.devicePixelRatio||1);
+      W=canvas.clientWidth||900; H=canvas.clientHeight||360;
+      canvas.width=W*dpr; canvas.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); refit();
+    }
+
+    function poly(pw, style){
+      ctx.beginPath();
+      for(let i=0;i<pw.length;i++){const s=P(pw[i]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y);}
+      ctx.closePath(); ctx.fillStyle=style; ctx.fill();
+      ctx.strokeStyle="rgba(0,0,0,.28)"; ctx.lineWidth=1; ctx.stroke();
+    }
+    function box(cx,cy,cz,sx,sy,sz,hex,o){
+      o=o||{};
+      const x0=cx-sx/2,x1=cx+sx/2,y0=cy-sy/2,y1=cy+sy/2,z0=cz-sz/2,z1=cz+sz/2;
+      const V=(x,y,z)=>({x,y,z});
+      poly([V(x0,y0,z0),V(x1,y0,z0),V(x1,y1,z0),V(x0,y1,z0)], shadeHex(hex,.30));      // bottom
+      poly([V(x0,y0,z0),V(x0,y1,z0),V(x0,y1,z1),V(x0,y0,z1)], shadeHex(hex,.52));      // west
+      poly([V(x1,y0,z0),V(x1,y1,z0),V(x1,y1,z1),V(x1,y0,z1)], shadeHex(hex,.64));      // east
+      poly([V(x0,y0,z0),V(x1,y0,z0),V(x1,y0,z1),V(x0,y0,z1)], shadeHex(hex,.74));      // south (front)
+      poly([V(x0,y1,z0),V(x1,y1,z0),V(x1,y1,z1),V(x0,y1,z1)], shadeHex(hex,.46));      // north
+      const top=[V(x0,y0,z1),V(x1,y0,z1),V(x1,y1,z1),V(x0,y1,z1)];
+      poly(top, shadeHex(hex,o.topf||1.0));
+      if(o.halo){ctx.strokeStyle=o.halo; ctx.lineWidth=2; ctx.beginPath();
+        for(let i=0;i<4;i++){const s=P(top[i]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y);} ctx.closePath(); ctx.stroke();}
+    }
+    function seg(a,b,hex,w){const pa=P(a),pb=P(b); ctx.strokeStyle=hex; ctx.lineWidth=w; ctx.lineCap="round";
+      ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke();}
+    function dot(p,hex,r){const s=P(p); ctx.fillStyle=hex; ctx.beginPath(); ctx.arc(s.x,s.y,r,0,7); ctx.fill();}
+
+    // 正向运动学骨架：用实际六轴关节角(度)还原臂型。连杆长度可配(kin)，
+    // 非逐型号精确 DH——但六轴运动忠实反映真机。
+    const M3=(A,B)=>[0,1,2].map(i=>[0,1,2].map(j=>A[i][0]*B[0][j]+A[i][1]*B[1][j]+A[i][2]*B[2][j]));
+    const AP=(R,v)=>({x:R[0][0]*v.x+R[0][1]*v.y+R[0][2]*v.z, y:R[1][0]*v.x+R[1][1]*v.y+R[1][2]*v.z, z:R[2][0]*v.x+R[2][1]*v.y+R[2][2]*v.z});
+    function fk(b,q,kin){
+      const K=kin||{}, h0=K.h0||150, la=K.la||300, lb=K.lb||280, lt=K.lt||120, d=Math.PI/180;
+      const Rz=a=>[[Math.cos(a),-Math.sin(a),0],[Math.sin(a),Math.cos(a),0],[0,0,1]];
+      const Ry=a=>[[Math.cos(a),0,Math.sin(a)],[0,1,0],[-Math.sin(a),0,Math.cos(a)]];
+      const Rx=a=>[[1,0,0],[0,Math.cos(a),-Math.sin(a)],[0,Math.sin(a),Math.cos(a)]];
+      let R=Rz(((b.yaw||0)+q[0])*d);     // 底座朝向(面向传送带) + J1
+      const S={x:b.x,y:b.y,z:h0};
+      R=M3(R,Ry(q[1]*d)); const dA=AP(R,{x:la,y:0,z:0}); const E={x:S.x+dA.x,y:S.y+dA.y,z:S.z+dA.z};
+      R=M3(R,Ry(q[2]*d)); const dB=AP(R,{x:lb,y:0,z:0}); const Wp={x:E.x+dB.x,y:E.y+dB.y,z:E.z+dB.z};
+      R=M3(M3(R,Rx(q[3]*d)),Ry(q[4]*d)); const dT=AP(R,{x:lt,y:0,z:0}); const T={x:Wp.x+dT.x,y:Wp.y+dT.y,z:Wp.z+dT.z};
+      return {S,E,W:Wp,T};
+    }
+
+    function polyLine(a,b,style,w){const pa=P(a),pb=P(b); ctx.strokeStyle=style; ctx.lineWidth=w;
+      ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke();}
+    function conveyor(){
+      const x0=(1-(GRID.cols+1)/2)*SP-SP*0.75, x1=(GRID.cols-(GRID.cols+1)/2)*SP+SP*0.75, yh=GRID.rows/2*SP+SP*0.12;
+      // 地面（暗）
+      poly([{x:x0-300,y:-yh-360,z:-44},{x:x1+300,y:-yh-360,z:-44},{x:x1+300,y:yh+360,z:-44},{x:x0-300,y:yh+360,z:-44}], "#0b1116");
+      // 传送带带体
+      box((x0+x1)/2,0,-18,(x1-x0),2*yh,36,"#1b262e",{topf:1.12});
+      // 3 条轨道分道线（沿带 X 方向）
+      for(let r=1;r<=GRID.rows;r++){const y=(r-(GRID.rows+1)/2)*SP;
+        polyLine({x:x0,y,z:1},{x:x1,y,z:1},"rgba(90,106,118,.35)",1);}
+      // 两侧护栏
+      polyLine({x:x0,y:-yh,z:8},{x:x1,y:-yh,z:8},"rgba(150,168,182,.28)",2);
+      polyLine({x:x0,y:yh,z:8},{x:x1,y:yh,z:8},"rgba(150,168,182,.28)",2);
+      // 流向箭头（沿 +X 动，示意流水线方向）
+      ctx.strokeStyle="rgba(255,176,32,.55)"; ctx.lineWidth=2; ctx.lineCap="round";
+      for(let x=x0+ (flow%SP); x<x1; x+=SP){
+        const tip=P({x, y:0, z:4}), up=P({x:x-40, y:64, z:4}), dn=P({x:x-40, y:-64, z:4});
+        ctx.beginPath(); ctx.moveTo(up.x,up.y); ctx.lineTo(tip.x,tip.y); ctx.lineTo(dn.x,dn.y); ctx.stroke();
+      }
+    }
+    function carriers(){
+      const list=[];
+      for(let r=1;r<=GRID.rows;r++)for(let c=1;c<=GRID.cols;c++){
+        const w=cellWorld(r,c); w.x+=(laneShift[r]||0);   // 各线独立前送：按行滑移
+        list.push({r,c,w,d:raw({x:w.x,y:w.y,z:60}).depth});
+      }
+      list.sort((a,b)=>b.d-a.d);   // 远→近
+      const outX=(GRID.cols-(GRID.cols+1)/2)*SP + SP*0.6;
+      for(const {r,c,w} of list){
+        const id=`R${r}C${c}`, act=activeSet.has(id);
+        if(w.x>outX) continue;                        // 移出右端的淡出
+        box(w.x,w.y,CH/2, CS,CS,CH, "#2c3b46", {topf:1.0, halo:act?"rgba(255,176,32,.95)":null});
+        (cellItems[id]||[]).forEach((col,k)=>          // 每格按已放物料逐层叠(火腿/起司)
+          box(w.x,w.y, CH+ k*LYR + LYR/2, CS*0.82, CS*0.82, LYR, col, {topf:1.06}));
+      }
+    }
+    function arms(){
+      stations.forEach((s,i)=>{
+        const b=baseWorld(i);
+        const col=faulted[s.id]?"#FF5257":colorHex(s.id,i);
+        box(b.x,b.y,60,150,150,120,"#39454f",{topf:1.15});   // 底座
+        let tip;
+        const j=jointsById[s.id];
+        if(j && j.length>=6){                                // 真机关节角 → FK
+          const f=fk(b,j,kinById[s.id]);
+          seg(f.S,f.E,col,15); seg(f.E,f.W,col,13); seg(f.W,f.T,col,11);
+          dot(f.S,col,9); dot(f.E,col,8); dot(f.W,col,7); tip=f.T;
+        } else {                                             // 定长两连杆 IK(大臂/小臂长度固定)
+          const e=effs[s.id]; if(!e) return;
+          const sh={x:b.x,y:b.y,z:250}, La=420, Lb=420;
+          let vx=e.x-sh.x, vy=e.y-sh.y, vz=e.z-sh.z;
+          const d0=Math.hypot(vx,vy,vz)||1e-6;
+          const dc=Math.max(60, Math.min(La+Lb-2, d0));     // 目标截到可达范围,连杆不伸缩
+          const sc=dc/d0, T={x:sh.x+vx*sc, y:sh.y+vy*sc, z:sh.z+vz*sc};
+          const hx=T.x-sh.x, hy=T.y-sh.y, hl=Math.hypot(hx,hy)||1e-6;
+          const ux=hx/hl, uy=hy/hl;                          // 肩→目标 的水平方向
+          const alpha=Math.atan2(T.z-sh.z, hl);
+          const cosE=Math.max(-1,Math.min(1,(La*La+dc*dc-Lb*Lb)/(2*La*dc)));
+          const th=alpha+Math.acos(cosE);                    // 肘朝上构型
+          const E={x:sh.x+ux*La*Math.cos(th), y:sh.y+uy*La*Math.cos(th), z:sh.z+La*Math.sin(th)};
+          seg(sh,E,col,15); seg(E,T,col,13); dot(sh,col,9); dot(E,col,8); tip=T;
+        }
+        // 末端 = 铲子(扁平) + 运送中的切片(接到料后到放下前)
+        box(tip.x,tip.y,tip.z, 100,58,12, "#93a0aa", {topf:1.15});
+        if(s.motion==="approach" || s.motion==="slide")
+          box(tip.x,tip.y,tip.z+13, 68,44,12, ITEMCOLOR[s.item]||col, {topf:1.15});
+      });
+    }
+    function feedLine(y,z,color,label){
+      // 架在传送带【上方】的供料带：立柱(地面→高处) + 供料带 + 流动切片 + 标签
+      const x0=feedX0(), x1=feedX1(), span=x1-x0;
+      box(x0, y, z/2, 16,16,z, "#3a464f",{topf:1.0});   // 左立柱(从地面竖起)
+      box(x1, y, z/2, 16,16,z, "#3a464f",{topf:1.0});   // 右立柱
+      box((x0+x1)/2, y, z, span, CS*0.7, 14, "#22333d",{topf:1.05});   // 供料带(架顶)
+      for(let k=0;k<4;k++){ const x=x0 + ((k*span/4 + flow*0.6)%span); box(x,y,z+14, CS*0.5,CS*0.5,12,color,{topf:1.12}); }
+      const s=P({x:(x0+x1)/2,y,z:z+80}); ctx.fillStyle="rgba(220,228,234,.9)";
+      ctx.font="600 11px ui-monospace,monospace"; ctx.textAlign="center"; ctx.fillText(label,s.x,s.y);
+    }
+    function feeds(){
+      // 三条供料线都架在传送带上方(不同高度,便于分辨)
+      feedLine(FEED.ham.y,    FEED.ham.z,    ITEMCOLOR.ham,    "火腿供料(上方)");
+      feedLine(FEED.cheese.y, FEED.cheese.z, ITEMCOLOR.cheese, "起司供料(上方)");
+      feedLine(FEED.bread.y,  FEED.bread.z,  ITEMCOLOR.bread,  "吐司供料(上方·上游)");
+    }
+    function draw(){ ctx.clearRect(0,0,W,H); conveyor(); feeds(); carriers(); arms(); }
+    function frame(){
+      const k=reduce?1:0.2;   // 缓动快到能在子动作时长内真正"到达"供料线/载具
+      if(!reduce) flow=(flow+2.4)%SP;    // 传送带流向动画
+      for(const s of stations){const e=effs[s.id], t=targets[s.id]; if(e&&t){e.x+=(t.x-e.x)*k; e.y+=(t.y-e.y)*k; e.z+=(t.z-e.z)*k;}}
+      // 视角切换缓动
+      if(Math.abs(camT.az-cam.az)>1e-3 || Math.abs(camT.el-cam.el)>1e-3){
+        const c=reduce?1:0.2; cam.az+=(camT.az-cam.az)*c; cam.el+=(camT.el-cam.el)*c; refit();
+      }
+      draw(); requestAnimationFrame(frame);
+    }
+
+    canvas.addEventListener("pointerdown",e=>{drag={x:e.clientX,y:e.clientY}; try{canvas.setPointerCapture(e.pointerId);}catch(_){}});
+    canvas.addEventListener("pointermove",e=>{ if(!drag)return;
+      cam.az+=(e.clientX-drag.x)*0.008; cam.el=Math.max(0.4,Math.min(1.5,cam.el+(e.clientY-drag.y)*0.005));
+      camT.az=cam.az; camT.el=cam.el;   // 拖拽时同步目标，避免回弹
+      drag={x:e.clientX,y:e.clientY}; refit();});
+    window.addEventListener("pointerup",()=>drag=null);
+    if(window.ResizeObserver) new ResizeObserver(resize).observe(canvas); else window.addEventListener("resize",resize);
+
+    resize(); requestAnimationFrame(frame);
+
+    return {
+      setView(name){ const v=VIEWS[name]; if(v){ camT.az=v.az; camT.el=v.el; } },
+      hasJoints(){ return hasJoints; },
+      invalidate(){ ensureBases(Math.max(nStat,1)); refit(); },
+      update(st){
+        stations=st.stations;
+        laneShift=st.laneShift||{};
+        cellItems=st.cellItems||{};
+        if(stations.length!==nStat){ nStat=stations.length; ensureBases(nStat); refit(); }
+        activeSet = new Set(Array.isArray(st.active) ? st.active : (st.active ? [st.active.cell] : []));
+        faulted={}; stations.forEach(s=>{ if(s.status==="fault") faulted[s.id]=1; });
+        jointsById={}; kinById={}; hasJoints=false;
+        stations.forEach(s=>{ if(s.joints && s.joints.length>=6){ jointsById[s.id]=s.joints; kinById[s.id]=s.kin; hasJoints=true; } });
+        stations.forEach((s,i)=>{
+          const b=baseWorld(i); let t;
+          const m=(s.target||"").match(/R(\d)C(\d)/);
+          if(m){
+            const w=cellWorld(+m[1],+m[2]); const fd=FEED[s.item]||FEED.ham;
+            // 取料点在【上游段上方】的供料线：伸向工位左上方最近的供料位
+            const fx=Math.max(feedX0()+70, Math.min(feedX1()-70, w.x-SP));
+            if(s.motion==="pick")          t={x:fx, y:fd.y, z:fd.z};         // 朝上游上方接一片
+            else if(s.motion==="approach") t={x:w.x, y:w.y, z:250};          // 回工位载具上方
+            else if(s.motion==="slide")    t={x:w.x+SP*0.34, y:w.y, z:150};  // 铲子往前滑放
+            else                           t={x:w.x, y:w.y, z:170};
+          } else { t={x:b.x, y:b.y-(b.side||-1)*160, z:320}; }               // home/idle：低位待命(明显低于供料线)
+          targets[s.id]=t;
+          if(!effs[s.id]) effs[s.id]={x:t.x,y:t.y,z:t.z};
+        });
+      }
+    };
+  }
+
+  // ================= DRIVER =================
+  let sim=null, live=false, playing=true, speed=3, timer=null, scene=null;
+
+  function statusTxtFromLive(s){
+    return (s.status||"idle").toUpperCase();
+  }
+
+  async function tryLive(){
+    try{
+      const r = await fetch("state.json", {cache:"no-store"});
+      if(!r.ok) throw 0;
+      const j = await r.json();
+      if(!j || !j.stations) throw 0;
+      return j;
+    }catch(e){ return null; }
+  }
+
+  const ZDESC = Object.fromEntries(ZONES.map(z=>[z.id, z.d]));
+  function zonesFromLive(owners){
+    // 服务端 zones = {zoneId: owner|null}；顺序稳定，描述取已知表
+    return Object.keys(owners).map(id=>({id, d:ZDESC[id]||"", owner:owners[id]||null}));
+  }
+  function applyGrid(g){
+    // LIVE：采纳服务端网格尺寸，保持 2D/3D 与控制器配置一致
+    if(!g || (g.rows===GRID.rows && g.cols===GRID.cols)) return;
+    GRID.rows=g.rows; GRID.cols=g.cols;
+    buildRowLabels(); _gridSig=null;
+    $("#grid-dims").textContent=`${GRID.rows}排×${GRID.cols}`;
+    if(scene) scene.invalidate();
+  }
+  function toRenderState(j){
+    applyGrid(j.grid);
+    // LIVE：由各工位 done 合成 cellItems(每格颜色)；真机部署时控制器可直接给 belt 状态
+    const cellItems={}; const stns=j.stations||[];
+    stns.forEach((s,i)=> (s.done||[]).forEach(c=>{ (cellItems[c]=cellItems[c]||[]).push(colorFor(s.name,i)); }));
+    return {
+      laneShift:{}, cellItems,
+      phase:(j.state||"wait_lock").toUpperCase().replace("WAIT_LINE_LOCKED","WAIT_LOCK"),
+      cycle:j.cycle||0, cycleTime:j.cycle_time_s||0, throughput:j.throughput_pph||0,
+      stations:(j.stations||[]).map(s=>({
+        id:s.name, nm:s.label||s.name, br:s.brand||"",
+        status:(s.status||"idle"), statusTxt:statusTxtFromLive(s),
+        target:s.target, vision:s.vision||{dx:0,dy:0,dth:0}, done:s.done||[], atHome:!!s.at_home,
+        joints:s.joints||null, kin:s.kin||null
+      })),
+      zones:zonesFromLive(j.zones||{}),
+      active:j.active||null, skips:j.skips||[],
+      log:(j.log||[]).map(m=> typeof m==="string"?{t:"",msg:m}:m)
+    };
+  }
+
+  function loop(){
+    if(live){
+      tryLive().then(j=>{ if(j) render(toRenderState(j)); });
+    } else if(playing && sim){
+      // multiple logical ticks per frame, scaled by speed
+      const steps = speed;
+      for(let i=0;i<steps;i++) sim.tick(0.12);
+      const st=sim.S;
+      render({
+        phase:st.phase, cycle:st.cycle, cycleTime:st.cycleTime, throughput:st.throughput,
+        stations:st.stations, zones:st.zones, active:st.active, log:st.log,
+        laneShift:st.laneShift, cellItems:st.cellColors()
+      });
+    }
+  }
+
+  function setMode(isLive){
+    live=isLive;
+    const m=$("#mode"), t=$("#mode-txt"), note=$("#note"), ctl=$("#controls");
+    if(isLive){
+      m.classList.add("live"); t.textContent="LIVE";
+      note.textContent="LIVE · 已连接控制器 (state.json)";
+      // hide sim-only controls, keep speed hidden
+      $("#btn-play").style.display=$("#btn-reset").style.display=$("#btn-fault").style.display="none";
+      document.querySelectorAll(".controls .grp")[1].style.display="none";
+    }else{
+      m.classList.remove("live"); t.textContent="DEMO";
+    }
+  }
+
+  // ---- controls ----
+  $("#btn-play").addEventListener("click",()=>{
+    playing=!playing; $("#btn-play").textContent=playing?"暂停 Pause":"运行 Play";
+    $("#btn-play").classList.toggle("primary",playing);
+  });
+  $("#btn-reset").addEventListener("click",()=>{ if(sim) sim.reset(); });
+  $("#btn-fault").addEventListener("click",()=>{ if(sim) sim.injectFault(); });
+  $("#spd").addEventListener("input",e=>{ speed=+e.target.value; $("#spd-v").textContent=speed+"×"; });
+  $("#v3dviews").addEventListener("click",e=>{
+    const b=e.target.closest("button"); if(!b)return;
+    [...e.currentTarget.children].forEach(x=>x.classList.toggle("on",x===b));
+    if(scene) scene.setView(b.dataset.v);
+  });
+
+  // ---- boot ----
+  buildStepper(); buildRowLabels();          // 网格/图例首帧由 render→ensureGrid 按工位建
+  scene = makeScene3D($("#cv3d"));           // 3D 场景（在首帧 render 前建好）
+  $("#grid-dims").textContent = `每排${GRID.cols}格 · 工位列C${ACTIVE_COLS[0]}`;   // 左空|C5工位|右完成
+  tryLive().then(j=>{
+    if(j){ setMode(true); render(toRenderState(j)); }
+    else { setMode(false); sim=makeSim(); }
+    timer=setInterval(loop, 130);
+  });
+})();
+</script>
+</body>
+</html>

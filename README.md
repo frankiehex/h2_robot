@@ -6,6 +6,21 @@
 
 详细设计见 [`docs/concept-design.md`](docs/concept-design.md)。
 
+**工位单元控制**（视觉引导取放 + 多机调度与区域互锁）：
+设计见 [`docs/cell-control-design.md`](docs/cell-control-design.md)，
+代码骨架见 [`cellctl/`](cellctl/)（含仿真驱动，无硬件可跑通：
+`python3 -m cellctl.main --cycles 3`；互锁测试：`python3 tests/test_zone_lock.py`）。
+
+**操作看板**：`python3 -m cellctl.main --dashboard` 后浏览器打开
+`http://127.0.0.1:8700`（`cellctl/dashboard/panel.html` 单独打开为网页内仿真 DEMO）。
+
+**三品牌混合车队**：法奥 F5 / 节卡 A5 / UR7 同线，每工位一款真机驱动
+（`cellctl/robots/{fairino,jaka,ur}_driver.py` 已填实）。部署示例
+[`cellctl/config/fleet.example.yaml`](cellctl/config/fleet.example.yaml)；
+接真机先跑安全首触：`python3 -m cellctl.smoke_test --station S3_ham --config cellctl/config/fleet.example.yaml`。
+
+**下一步怎么做**：见实施路线图 [`docs/roadmap.md`](docs/roadmap.md)。
+
 ## 核心思路一页速览
 
 1. **用并行补速度**：协作机器人单臂节拍慢（一次取放约 3–5 s），

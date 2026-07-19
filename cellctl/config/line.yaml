@@ -1,0 +1,62 @@
+# 线体与工位单元配置
+# 行列数、手臂、zone 都在这里改；代码不写死任何布局。
+
+line:
+  step_timeout_s: 5.0        # 线体步进超时
+  lock_signal_timeout_s: 10.0 # 等到位锁定超时
+
+# 工作窗口网格：概念设计为 3x3 九宫格；一行 4 载具时改 cols: 4 即 3x4=12 格
+grid:
+  rows: 3
+  cols: 4
+  scan_order: serpentine     # serpentine(蛇形) | by_column(按列扫)
+
+stations:
+  - name: S3_ham             # 放火腿工位（视觉引导取料）
+    label: "S3 · 放火腿"      # 看板显示名
+    brand: "节卡 Zu7"         # 看板品牌标签
+    robot:
+      driver: sim            # sim | ur | jaka | fairino
+      host: 192.168.1.101
+      home: [0.0, -90.0, 90.0, -90.0, -90.0, 0.0]   # HOME 安全岛（关节角, deg）
+      blend_mm: 15.0
+      speed_mm_s: 250.0
+    vision:
+      enabled: true
+      camera_index: 0
+      calibration_file: config/calibration/S3_ham.yaml
+      min_score: 0.6         # 低于此分按"空格/来料异常"跳过
+    pick_zone: Z_S3_FEED     # 取料托板区（与切片机出料共享）
+    grid_zones: [Z_S3_GRID]  # 本臂放置时占用的窗口区
+
+  - name: S5_egg             # 放蛋皮/起司工位
+    label: "S5 · 放蛋皮"      # 看板显示名
+    brand: "节卡 Zu7"         # 看板品牌标签
+    robot:
+      driver: sim
+      host: 192.168.1.102
+      home: [0.0, -90.0, 90.0, -90.0, -90.0, 0.0]
+      blend_mm: 15.0
+      speed_mm_s: 200.0      # 蛋皮软，降速
+    vision:
+      enabled: true
+      camera_index: 1
+      calibration_file: config/calibration/S5_egg.yaml
+      min_score: 0.5
+    pick_zone: Z_S5_FEED
+    grid_zones: [Z_S5_GRID]
+
+# 区域互锁定义：相邻手臂工作包络的重叠区。
+# 布局能分开就分开（第一层）；这里只登记确实共享的空间。
+zones:
+  - name: Z_S3_FEED
+    desc: 火腿切片机出料托板上方
+  - name: Z_S3_GRID
+    desc: S3 工位窗口上方
+  - name: Z_S5_FEED
+    desc: 蛋皮出料带上方
+  - name: Z_S5_GRID
+    desc: S5 工位窗口上方
+  # 示例：若 S3 与 S5 窗口边缘重叠，定义共享区并在两臂 grid_zones 里都列上
+  # - name: Z_S3_S5_OVERLAP
+  #   desc: S3/S5 包络重叠带
