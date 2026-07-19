@@ -686,10 +686,20 @@
           const f=fk(b,j,kinById[s.id]);
           seg(f.S,f.E,col,15); seg(f.E,f.W,col,13); seg(f.W,f.T,col,11);
           dot(f.S,col,9); dot(f.E,col,8); dot(f.W,col,7); tip=f.T;
-        } else {                                             // 两连杆缓动估计
+        } else {                                             // 定长两连杆 IK(大臂/小臂长度固定)
           const e=effs[s.id]; if(!e) return;
-          const sh={x:b.x,y:b.y,z:250}, el={x:(sh.x+e.x)/2,y:(sh.y+e.y)/2,z:Math.max(sh.z,e.z)+120};
-          seg(sh,el,col,15); seg(el,e,col,13); dot(sh,col,9); dot(el,col,8); tip=e;
+          const sh={x:b.x,y:b.y,z:250}, La=420, Lb=420;
+          let vx=e.x-sh.x, vy=e.y-sh.y, vz=e.z-sh.z;
+          const d0=Math.hypot(vx,vy,vz)||1e-6;
+          const dc=Math.max(60, Math.min(La+Lb-2, d0));     // 目标截到可达范围,连杆不伸缩
+          const sc=dc/d0, T={x:sh.x+vx*sc, y:sh.y+vy*sc, z:sh.z+vz*sc};
+          const hx=T.x-sh.x, hy=T.y-sh.y, hl=Math.hypot(hx,hy)||1e-6;
+          const ux=hx/hl, uy=hy/hl;                          // 肩→目标 的水平方向
+          const alpha=Math.atan2(T.z-sh.z, hl);
+          const cosE=Math.max(-1,Math.min(1,(La*La+dc*dc-Lb*Lb)/(2*La*dc)));
+          const th=alpha+Math.acos(cosE);                    // 肘朝上构型
+          const E={x:sh.x+ux*La*Math.cos(th), y:sh.y+uy*La*Math.cos(th), z:sh.z+La*Math.sin(th)};
+          seg(sh,E,col,15); seg(E,T,col,13); dot(sh,col,9); dot(E,col,8); tip=T;
         }
         // 末端 = 铲子(扁平) + 运送中的切片(接到料后到放下前)
         box(tip.x,tip.y,tip.z, 100,58,12, "#93a0aa", {topf:1.15});
