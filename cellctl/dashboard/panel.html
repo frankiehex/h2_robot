@@ -246,7 +246,7 @@
         <div class="rowlabels" id="rowlabels"></div>
         <div class="grid" id="grid" style="--cols:4"></div>
         <div class="winmeta">
-          <div class="rowtag act">四线独立 · 每线3份×5层逐片抓放 · 哪线做完哪线自送3格</div>
+          <div class="rowtag act">四线独立 · 工位列C5固定 · 每份完成即前送一格 · 供料在上游上方</div>
           <div class="legend" id="legend"></div>
         </div>
       </div>
@@ -288,11 +288,11 @@
     ["01","WAIT_LOCK"],["02","CAPTURE"],["03","DISPATCH"],
     ["04","EXECUTING"],["05","ADVANCE"]
   ];
-  // 传送带每排显示 9 格：左3=空(来料)｜中3=作业窗口｜右3=已完成(流出)。
-  // 两台对面臂之间的中间窗口 = 3 格(沿带) × 4 行 = 12，两臂协同填充
-  // (火腿臂领做、起司臂跟做,错开不打架;每格叠火腿+起司)。
+  // 传送带每排 9 格：左=空载具(上游来料)｜C5=固定组装工位｜右=已完成(流出)。
+  // 每条线做完【一份】就前送【一格】(工位列固定)；供料线架在上游段上方。
   const GRID = {rows:4, cols:9};
-  const ACTIVE_COLS = [4,5,6];     // 中间 3 格 × 4 行 = 12 = 作业窗口
+  const ACTIVE_COLS = [5];         // 固定组装工位列
+  const FEED_COLS = [2,3,4];       // 供料线悬在上游(还没做到)这段的上方
   const SP = 260;                  // 载具间距(世界mm)，DEMO 与 3D 共用（前送一格=SP）
   const ITEMCOLOR = {bread:"#D9B382", ham:"#FF7A5C", cheese:"#F4C430"};  // 吐司 / 火腿 / 起司
   const STATIONS = [
@@ -380,7 +380,7 @@
             <span class="vis">
               <span>dx <b>${fmt(v.dx)}</b></span><span>dy <b>${fmt(v.dy)}</b></span><span>dθ <b>${fmt(v.dth)}</b></span>
             </span></div>
-          <div class="r"><span class="k">本线进度</span><span class="val">${s.done.length}/3 份</span></div>
+          <div class="r"><span class="k">累计完成</span><span class="val">${s.done.length} 份</span></div>
           <div class="r"><span class="k">安全岛 HOME</span>
             <span class="home-ind ${homeCls}"><span class="d"></span>${s.atHome?"在位":"离位"}</span></div>
         </div>
@@ -428,8 +428,9 @@
   function makeSim(){
     const SEQ = ["bread","ham","bread","cheese","bread"];   // 三片吐司夹火腿/起司(酱由泵,略)
     const LANES = [[1,2],[3,4]];                            // 每臂管的两条线
-    const laneCells = r => [6,5,4].map(c=>`R${r}C${c}`);    // 该线窗口3格,从右往左
-    const LANE_T = 2.2;                                     // 单线前送3格的滑移时长(仿真秒)
+    const STA_C = ACTIVE_COLS[0];                           // 固定组装工位列(C5)
+    const staCell = r => `R${r}C${STA_C}`;
+    const LANE_T = 1.1;                                     // 单线前送【一格】的滑移时长(仿真秒)
     const S = {
       phase:"WAIT_LOCK", cycle:0, cycleTime:0, throughput:0,
       stations:STATIONS.map(s=>({...s, status:"idle", statusTxt:"待命", motion:null,
@@ -439,27 +440,27 @@
       _clock:0, _phaseT:0, _faultReq:false, _lastAdv:0, _out:0, _t0:0,
       _adv:{},                                              // 正在前送的线 {row: 已进行时长}
       // B 臂错峰启动(wait0)：加上动作时长抖动，四条线自然错开、各走各的
-      _arm:[{lane:1,cell:0,layer:0,sub:"pick",t:0,need:1.4,wait0:0},
-            {lane:3,cell:0,layer:0,sub:"pick",t:0,need:1.4,wait0:3.5}]
+      _arm:[{lane:1,layer:0,sub:"pick",t:0,need:1.4,wait0:0,total:0},
+            {lane:3,layer:0,sub:"pick",t:0,need:1.4,wait0:3.5,total:0}]
     };
-    // 初始：右3格=整份三明治(流出区)；其余空
+    // 初始：工位列右侧=整份三明治(流出区)；工位列及左侧=空
     for(let r=1;r<=GRID.rows;r++)for(let c=1;c<=GRID.cols;c++)
-      S.cell[`R${r}C${c}`] = c>=7 ? SEQ.slice() : [];
+      S.cell[`R${r}C${c}`] = c>STA_C ? SEQ.slice() : [];
     const push = (msg,fault)=>{ S.log.unshift({t:S._clock.toFixed(1)+"s", msg, fault}); if(S.log.length>30)S.log.pop(); };
     const setPhase = p => { S.phase=p; S._phaseT=0; };
 
-    function startLaneAdvance(r){ S._adv[r]=0; push(`[线${r}] 3 份完成 · 单线前送`); }
+    function startLaneAdvance(r){ S._adv[r]=0; push(`[线${r}] 1 份完成 · 前送一格`); }
     function tickAdvances(dt){
       for(const r of Object.keys(S._adv)){
-        S._adv[r]+=dt; S.laneShift[r]=3*SP*Math.min(1,S._adv[r]/LANE_T);
+        S._adv[r]+=dt; S.laneShift[r]=SP*Math.min(1,S._adv[r]/LANE_T);
         if(S._adv[r]>=LANE_T){
-          for(let c=GRID.cols;c>=1;c--){ const src=c-3;
+          for(let c=GRID.cols;c>=1;c--){ const src=c-1;   // 整线右移一格
             S.cell[`R${r}C${c}`] = src>=1 ? S.cell[`R${r}C${src}`] : []; }
           S.laneShift[r]=0; delete S._adv[r];
-          S.cycle++; S._out+=3;
+          S.cycle++; S._out+=1;
           S.cycleTime=+(S._clock-S._lastAdv).toFixed(1); S._lastAdv=S._clock;
           S.throughput=Math.round(S._out*3600/Math.max(S._clock-S._t0,1));
-          push(`[线${r}] 前送完成 · 流出 3 份 (累计 ${S._out})`);
+          push(`[线${r}] 前送一格 · 累计流出 ${S._out} 份`);
         }
       }
     }
@@ -469,7 +470,7 @@
       switch(S.phase){
         case "WAIT_LOCK": if(S._phaseT>=1.0){ push("[line] 到位锁定"); setPhase("CAPTURE"); } break;
         case "CAPTURE":   if(S._phaseT>=0.8){ push("[vision] 触发相机 · 逐格定位"); setPhase("DISPATCH"); } break;
-        case "DISPATCH":  if(S._phaseT>=0.6){ push("连续运行: 四线独立 · 各线做完自送3格");
+        case "DISPATCH":  if(S._phaseT>=0.6){ push("连续运行: 四线独立 · 每份完成即前送一格");
           S._t0=S._clock; S._lastAdv=S._clock; setPhase("EXECUTING"); } break;
         case "EXECUTING": tickAdvances(dt); stepExec(dt); break;
         case "FAULT": tickAdvances(dt); break;   // 已在途的线走完,臂停
@@ -483,29 +484,29 @@
     function buildArm(dt, A, k){
       const L=S._arm[k];
       if(L.wait0>0){ L.wait0-=dt; A.status="idle"; A.statusTxt="错峰启动中"; A.motion=null; A.target=null; return; }
-      if(S._adv[L.lane]!==undefined){                       // 当前线在前送 → 试着换另一条线
+      if(S._adv[L.lane]!==undefined){                       // 当前线在前送 → 换另一条线继续做
         const other=LANES[k].find(r=>r!==L.lane);
-        if(S._adv[other]===undefined){ L.lane=other; L.cell=0; L.layer=0; L.sub="pick"; L.t=0; }
-        else { A.status="idle"; A.statusTxt="等待载具"; A.motion=null; A.target=null; return; }
+        if(S._adv[other]===undefined){ L.lane=other; L.layer=0; L.sub="pick"; L.t=0; }
+        else { A.status="idle"; A.statusTxt="等待前送"; A.motion=null; A.target=null; return; }
       }
-      const cells=laneCells(L.lane), id=cells[L.cell], item=SEQ[L.layer]; A.item=item;
+      const id=staCell(L.lane), item=SEQ[L.layer]; A.item=item;
       if(L.sub==="pick"){ A.status="picking"; A.statusTxt=`线${L.lane}·取${LBL[item]}`; A.motion="pick"; A.target=id;
         L.t+=dt; if(L.t>=L.need){ L.sub="approach"; L.t=0; L.need=nextNeed(); } }
       else if(L.sub==="approach"){ A.status="placing"; A.statusTxt="到位"; A.motion="approach"; A.target=id;
         L.t+=dt; if(L.t>=L.need){ L.sub="slide"; L.t=0; L.need=nextNeed(); } }
       else { A.status="placing"; A.statusTxt="铲入·滑放"; A.motion="slide"; A.target=id;
         L.t+=dt; if(L.t>=L.need){ L.need=nextNeed(); S.cell[id].push(item);
-          push(`[${LBL[item]}] 线${L.lane} ${id} · 第${L.layer+1}/${SEQ.length}层`);
+          push(`[${LBL[item]}] 线${L.lane} · 第${L.layer+1}/${SEQ.length}层`);
           L.layer++; L.sub="pick"; L.t=0;
-          if(L.layer>=SEQ.length){ L.layer=0; L.cell++;
-            if(L.cell>=cells.length){                        // 该线3格建完 → 单线前送,换线
-              if(S._faultReq && k===1){ A.status="fault"; A.statusTxt="FAULT"; A.atHome=false;
-                push(`[线${L.lane}] B 臂故障 — 该线暂停`, true); setPhase("FAULT"); return; }
-              startLaneAdvance(L.lane);
-              const other=LANES[k].find(r=>r!==L.lane);
-              L.lane=other; L.cell=0; L.layer=0; L.sub="pick"; L.t=0;
-            } } } }
-      A.done=laneCells(L.lane).slice(0,L.cell);
+          if(L.layer>=SEQ.length){                           // 一份完成 → 该线立即前送一格
+            L.layer=0; L.total++;
+            if(S._faultReq && k===1){ A.status="fault"; A.statusTxt="FAULT"; A.atHome=false;
+              push(`[线${L.lane}] B 臂故障 — 该线暂停`, true); setPhase("FAULT"); return; }
+            startLaneAdvance(L.lane);
+            const other=LANES[k].find(r=>r!==L.lane);        // 前送期间转做另一条线
+            if(S._adv[other]===undefined){ L.lane=other; }
+          } } }
+      A.done=new Array(L.total).fill(1);                     // 累计完成份数(供工位卡显示)
     }
     function stepExec(dt){
       const A=S.stations[0], B=S.stations[1];
@@ -561,10 +562,10 @@
       });
     }
     const baseWorld=i=> bases[i] || {x:0,y:-(1.55*SP+140),z:0,yaw:90,side:-1};
-    // 供料线【高高架在传送带上方】(龙门架)：机械臂就近上去接一片。x 随取料格。
+    // 供料线【架在上游段上方】(龙门架)：臂朝上游上方接一片,回工位放——最顺手。
     const FEED = { bread:{y:0,z:720}, ham:{y:-170,z:660}, cheese:{y:170,z:660} };
-    const feedX0=()=>(Math.min(...ACTIVE_COLS)-(GRID.cols+1)/2)*SP - SP*0.6;
-    const feedX1=()=>(Math.max(...ACTIVE_COLS)-(GRID.cols+1)/2)*SP + SP*0.6;
+    const feedX0=()=>(Math.min(...FEED_COLS)-(GRID.cols+1)/2)*SP - SP*0.5;
+    const feedX1=()=>(Math.max(...FEED_COLS)-(GRID.cols+1)/2)*SP + SP*0.5;
 
     function raw(p){
       const ca=Math.cos(cam.az), sa=Math.sin(cam.az);
@@ -763,8 +764,10 @@
           const m=(s.target||"").match(/R(\d)C(\d)/);
           if(m){
             const w=cellWorld(+m[1],+m[2]); const fd=FEED[s.item]||FEED.ham;
-            if(s.motion==="pick")          t={x:w.x, y:fd.y, z:fd.z};        // 上去接一片(就近)
-            else if(s.motion==="approach") t={x:w.x, y:w.y, z:250};          // 移到载具上方
+            // 取料点在【上游段上方】的供料线：伸向工位左上方最近的供料位
+            const fx=Math.max(feedX0()+70, Math.min(feedX1()-70, w.x-SP));
+            if(s.motion==="pick")          t={x:fx, y:fd.y, z:fd.z};         // 朝上游上方接一片
+            else if(s.motion==="approach") t={x:w.x, y:w.y, z:250};          // 回工位载具上方
             else if(s.motion==="slide")    t={x:w.x+SP*0.34, y:w.y, z:150};  // 铲子往前滑放
             else                           t={x:w.x, y:w.y, z:170};
           } else { t={x:b.x, y:b.y-(b.side||-1)*160, z:320}; }               // home/idle：低位待命(明显低于供料线)
@@ -873,7 +876,7 @@
   // ---- boot ----
   buildStepper(); buildRowLabels();          // 网格/图例首帧由 render→ensureGrid 按工位建
   scene = makeScene3D($("#cv3d"));           // 3D 场景（在首帧 render 前建好）
-  $("#grid-dims").textContent = `每排${GRID.cols}格 · 窗口3×4=12`;   // 长带9格：左空|中作业|右完成
+  $("#grid-dims").textContent = `每排${GRID.cols}格 · 工位列C${ACTIVE_COLS[0]}`;   // 左空|C5工位|右完成
   tryLive().then(j=>{
     if(j){ setMode(true); render(toRenderState(j)); }
     else { setMode(false); sim=makeSim(); }
